@@ -81,12 +81,12 @@ export function apply(ctx) {
     }
   })
 
-  // 暴露 emit 给宿主端其他逻辑调用；这里示例：启动 5 秒后自动发一个事件，
+  // 暴露 emit 给宿主端其他逻辑调用；这里示例：每 5 秒自动发一个事件，
   // 证明「host 主动触发」不需要任何客户端请求。
   ctx.effect(() => {
-    const timer = setTimeout(() => {
+    const timer = setInterval(() => {
       emit('hello/notice', ['host is alive at ' + new Date().toLocaleTimeString()])
     }, 5_000)
-    return () => clearTimeout(timer)
+    return () => clearInterval(timer)
   })
 }

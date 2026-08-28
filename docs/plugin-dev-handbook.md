@@ -223,7 +223,7 @@ function apply(ctx) {
 - [ ] 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`
 - [ ] Web 端右下角出现「👋 hello world」悬浮按钮
 - [ ] 点击按钮：宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host, hello browser!` 后恢复计数
-- [ ] 宿主启动约 5 秒后（无需操作）按钮上方出现气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...`
+- [ ] 宿主每 5 秒（无需操作）按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...`
 
 ---
 
