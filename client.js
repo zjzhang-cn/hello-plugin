@@ -5,7 +5,7 @@
 // Registration id must equal the package name, the graph row id.
 console.log('hello-plugin/client.js loaded')
 window.__ModuleLoader__.load({
-  id: 'dsh-gehc-plugin',
+  id: 'dsh-hello-plugin',
   factory: (require) => {
     const React = require('react')
 
