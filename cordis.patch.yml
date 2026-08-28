@@ -2,4 +2,4 @@
     - id: dsh-hello-plugin
       # client 半区不在此声明：由 dsh-client-modules 扫描 entry 最近处的
       # package.json（需 dsh.client.platform=web + exports["./client"]）发现。
-      name: /home/gehc/work/dsh/hello-plugin/host.js
+      name: dsh-hello-plugin

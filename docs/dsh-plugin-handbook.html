@@ -1,0 +1,581 @@
+<title>dsh 插件开发手册</title>
+<style>
+  :root {
+    --bg: #f6f8fc;
+    --surface: #ffffff;
+    --surface-2: #f0f4fb;
+    --ink: #0b1e3a;
+    --ink-2: #31456b;
+    --muted: #5c6e8c;
+    --line: #dce5f2;
+    --line-strong: #c3d2e8;
+    --accent: #4f7cff;
+    --accent-ink: #2b53c8;
+    --accent-soft: #e9f0ff;
+    --cyan: #0e93ab;
+    --cyan-soft: #e4f5f8;
+    --ok: #1d9167;
+    --warn: #b9771c;
+    --bad: #c24a4a;
+    --bad-soft: #fcebeb;
+    --code-bg: #0b1e3a;
+    --code-ink: #e7eef9;
+    --code-dim: #9db4d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1322;
+      --surface: #101a2e;
+      --surface-2: #15223b;
+      --ink: #e8eff9;
+      --ink-2: #b8c6dc;
+      --muted: #8fa2c0;
+      --line: #22324f;
+      --line-strong: #31436a;
+      --accent: #7c9bff;
+      --accent-ink: #9db4ff;
+      --accent-soft: #172441;
+      --cyan: #4fc6de;
+      --cyan-soft: #0f2530;
+      --ok: #3fbf8c;
+      --warn: #e0a048;
+      --bad: #e07070;
+      --bad-soft: #33202a;
+      --code-bg: #060c18;
+      --code-ink: #dce7f6;
+      --code-dim: #7f94b8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1322;
+    --surface: #101a2e;
+    --surface-2: #15223b;
+    --ink: #e8eff9;
+    --ink-2: #b8c6dc;
+    --muted: #8fa2c0;
+    --line: #22324f;
+    --line-strong: #31436a;
+    --accent: #7c9bff;
+    --accent-ink: #9db4ff;
+    --accent-soft: #172441;
+    --cyan: #4fc6de;
+    --cyan-soft: #0f2530;
+    --ok: #3fbf8c;
+    --warn: #e0a048;
+    --bad: #e07070;
+    --bad-soft: #33202a;
+    --code-bg: #060c18;
+    --code-ink: #dce7f6;
+    --code-dim: #7f94b8;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px 72px; }
+  a { color: var(--accent-ink); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: "IBM Plex Mono", "SF Mono", Menlo, monospace; }
+  code {
+    font-size: 0.86em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.12em 0.38em;
+    color: var(--ink-2);
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    border: 1px solid var(--line);
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+  pre .c { color: var(--code-dim); }
+  pre .k { color: #7fb8ff; }
+  pre .s { color: #a5d6b5; }
+
+  /* masthead */
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 56px 0 0;
+    font-weight: 500;
+  }
+  h1 {
+    font-family: "Fraunces", "Songti SC", serif;
+    font-weight: 600;
+    font-size: clamp(2rem, 5vw, 2.9rem);
+    line-height: 1.12;
+    margin: 8px 0 12px;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    font-size: 1.06rem;
+    color: var(--ink-2);
+    max-width: 44em;
+    margin: 0 0 10px;
+  }
+  .meta {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.74rem;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    margin: 0 0 40px;
+  }
+  .meta span + span::before { content: " · "; color: var(--line-strong); }
+
+  /* toc */
+  .toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 0;
+    margin: 0 0 44px;
+    font-size: 0.9rem;
+  }
+  .toc a { color: var(--ink-2); }
+  .toc a:hover { color: var(--accent-ink); text-decoration: none; }
+  .toc .num { font-family: "IBM Plex Mono", monospace; color: var(--accent); font-size: 0.78rem; margin-right: 4px; }
+
+  /* section headers */
+  section { margin-top: 56px; }
+  h2 {
+    font-family: "Fraunces", "Songti SC", serif;
+    font-weight: 600;
+    font-size: 1.5rem;
+    margin: 0 0 6px;
+    text-wrap: balance;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h2 .secno {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+  .sec-intro { color: var(--muted); margin: 0 0 24px; max-width: 46em; }
+
+  /* architecture strip */
+  .arch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .arch-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .arch-card h3 { margin: 0 0 8px; font-size: 0.98rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .arch-card p { margin: 0; font-size: 0.87rem; color: var(--ink-2); }
+  .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-weight: 500;
+  }
+  .tag.host { background: var(--accent-soft); color: var(--accent-ink); }
+  .tag.client { background: var(--cyan-soft); color: var(--cyan); }
+  .tag.wire { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  .flow-note {
+    margin-top: 14px;
+    font-size: 0.86rem;
+    color: var(--muted);
+    border-left: 3px solid var(--line-strong);
+    padding-left: 12px;
+  }
+
+  /* file table */
+  .table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .table th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .table td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .table td:first-child { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; white-space: nowrap; color: var(--accent-ink); }
+  .table tr:last-child td { border-bottom: none; }
+  .table .role { white-space: nowrap; }
+  .role-host { color: var(--accent-ink); font-weight: 500; }
+  .role-client { color: var(--cyan); font-weight: 500; }
+
+  /* timeline */
+  .timeline { position: relative; margin: 0; padding: 0; list-style: none; }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 19px;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    background: linear-gradient(var(--accent), var(--cyan));
+    opacity: 0.35;
+  }
+  .tl-item { position: relative; padding: 0 0 30px 56px; }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-num {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    color: var(--accent-ink);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tl-item.warn .tl-num { border-color: var(--bad); color: var(--bad); }
+  .tl-item.fix .tl-num { border-color: var(--ok); color: var(--ok); }
+  .tl-item h3 { margin: 2px 0 6px; font-size: 1.02rem; font-weight: 600; }
+  .tl-item h3 .stage {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    margin-left: 8px;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .stage.explore { background: var(--cyan-soft); color: var(--cyan); }
+  .stage.build { background: var(--accent-soft); color: var(--accent-ink); }
+  .stage.bug { background: var(--bad-soft); color: var(--bad); }
+  .stage.fix { background: var(--surface-2); color: var(--ok); border: 1px solid var(--line); }
+  .tl-item p { margin: 0 0 10px; font-size: 0.92rem; color: var(--ink-2); max-width: 44em; }
+  .tl-item pre { margin: 8px 0 12px; }
+  .path {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.74rem;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 7px;
+    display: inline-block;
+    margin: 0 2px 2px 0;
+  }
+
+  /* convention cards */
+  .conv { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .conv-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  .conv-card h3 { margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
+  .conv-card .sub { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; color: var(--muted); margin: 0 0 10px; letter-spacing: 0.03em; }
+  .conv-card ul { margin: 0; padding-left: 18px; }
+  .conv-card li { margin-bottom: 7px; font-size: 0.88rem; color: var(--ink-2); }
+  .conv-card li:last-child { margin-bottom: 0; }
+  .conv-card li b { color: var(--ink); font-weight: 600; }
+
+  /* pitfalls */
+  .pits { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .pit {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--bad);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .pit.ok { border-top-color: var(--ok); }
+  .pit h3 { margin: 0 0 6px; font-size: 0.95rem; font-weight: 600; }
+  .pit .err { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; color: var(--bad); margin: 0 0 8px; }
+  .pit p { margin: 0; font-size: 0.85rem; color: var(--ink-2); }
+  .pit .fix-line { margin-top: 8px; font-size: 0.85rem; color: var(--ok); }
+  .pit .fix-line b { color: var(--ok); }
+
+  /* checklist */
+  .check { list-style: none; padding: 0; margin: 0; }
+  .check li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    font-size: 0.92rem;
+  }
+  .check input { margin-top: 5px; accent-color: var(--accent); width: 16px; height: 16px; }
+  .check code { background: var(--surface-2); }
+
+  .foot {
+    margin-top: 64px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  @media (max-width: 760px) {
+    .arch, .conv, .pits { grid-template-columns: 1fr; }
+    .wrap { padding: 0 18px 56px; }
+    h1 { font-size: 1.9rem; }
+  }
+</style>
+
+<p class="kicker">Learning Handbook · DeepSeek Harness</p>
+<h1>dsh 插件开发手册</h1>
+<p class="lede">以 <code>dsh-hello-plugin</code> 为样本，记录「双面插件」从零接通 <em>客户端点击 → 宿主</em> 的完整开发过程，以及逐步沉淀下来的插件开发规范。适合照着写第一个 dsh 插件的人。</p>
+<p class="meta"><span>2026-08 · 编写于实现之后</span><span>样本仓库 dsh-hello-plugin</span><span>配合 deepseek-harness 源码阅读</span></p>
+
+<nav class="toc">
+  <a href="#structure"><span class="num">01</span>认识这个仓库</a>
+  <a href="#arch"><span class="num">02</span>双面插件如何接线</a>
+  <a href="#process"><span class="num">03</span>开发过程</a>
+  <a href="#rules"><span class="num">04</span>插件开发规范</a>
+  <a href="#pits"><span class="num">05</span>踩坑记录</a>
+  <a href="#verify"><span class="num">06</span>验证清单</a>
+</nav>
+
+<section id="structure">
+  <h2><span class="secno">01</span>认识这个仓库</h2>
+  <p class="sec-intro">一个最小可运行的 dsh（DeepSeek Harness，全插件化 Cordis agent 框架）插件。它本身不构建、不测试 —— 它是被 deepseek-harness 工作区消费的插件。开发流程只有两件事：改代码、<code>node --check</code>。</p>
+  <table class="table">
+    <tr><th>文件</th><th>角色</th><th>职责</th></tr>
+    <tr><td>host.js</td><td class="role role-host">宿主半区</td><td>Node 端 Cordis 插件入口，<code>name</code> + <code>apply(ctx)</code>；注册 <code>/hello</code> RPC 通道</td></tr>
+    <tr><td>client.js</td><td class="role role-client">客户端半区</td><td>浏览器 bundle，右下角悬浮按钮；点击经 RPC 调宿主</td></tr>
+    <tr><td>cordis.patch.yml</td><td class="role">patch 层</td><td>把宿主插件行插入启动图（boot graph）的插件列表</td></tr>
+    <tr><td>package.json</td><td class="role">包清单</td><td>声明两个半区的导出与 dsh 集成字段</td></tr>
+  </table>
+</section>
+
+<section id="arch">
+  <h2><span class="secno">02</span>双面插件如何接线</h2>
+  <p class="sec-intro">同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理。关键在「线缆」：浏览器和宿主之间隔着 HTTP，消息要过一层 RPC 信封。</p>
+  <div class="arch">
+    <div class="arch-card">
+      <h3><span class="tag host">host</span>宿主半区</h3>
+      <p><code>exports["."]</code> → host.js。作为普通 Cordis 插件行进入启动图，<code>apply(ctx)</code> 在 Node 进程里跑。</p>
+    </div>
+    <div class="arch-card">
+      <h3><span class="tag client">client</span>客户端半区</h3>
+      <p><code>exports["./client"]</code> + <code>dsh.client.platform=web</code>。由 dsh-client-modules 扫描发现，浏览器端通过 <code>window.__ModuleLoader__.load</code> 注册。</p>
+    </div>
+    <div class="arch-card">
+      <h3><span class="tag wire">wire</span>线缆 connection</h3>
+      <p>浏览器↔宿主之间：客户端 <code>ctx.connection.rpc.call</code>，宿主 <code>ctx.connection.rpc.handle</code>，两边共用一套 RPC 信封。</p>
+    </div>
+  </div>
+  <p class="flow-note">这套手册的实质，就是弄懂 <strong>wire</strong> 这一格：客户端怎么把消息递到宿主的 <code>apply(ctx)</code> 里。</p>
+</section>
+
+<section id="process">
+  <h2><span class="secno">03</span>开发过程</h2>
+  <p class="sec-intro">以下是实现「客户端点击调用宿主」时的真实推进顺序。每一步都记下了当时发现了什么、证据在哪、结论是什么。</p>
+
+  <ol class="timeline">
+    <li class="tl-item">
+      <div class="tl-num">01</div>
+      <h3>读既有结构，确认起点 <span class="stage explore">explore</span></h3>
+      <p>仓库里已有一个最小的双面插件骨架：宿主半区打日志，客户端半区渲染一个悬浮按钮并注入 <code>shell.overlay</code> 插槽。任务是在此之上接通「点击按钮 → 宿主」。当时对 harness 一无所知，唯一可依赖的是宿主端的日志输出。</p>
+      <span class="path">host.js</span><span class="path">client.js</span><span class="path">cordis.patch.yml</span><span class="path">package.json</span>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">02</div>
+      <h3>定位通信机制：client-connection 包 <span class="stage explore">explore</span></h3>
+      <p>在 deepseek-harness 源码里搜「客户端如何调宿主」，命中 <span class="path">packages/client/connection</span> —— 它是浏览器↔宿主的线缆层。三份关键文件把机制讲清楚了：</p>
+      <p>· <span class="path">src/rpc.ts</span> 定义信封：请求 <code>{ type:'client-request', rpcId, method, payload }</code>，结果 <code>{ ok:true, value } | { ok:false, error }</code>。</p>
+      <p>· <span class="path">src/rpc-host.ts</span> 说明宿主注册方式：<code>connection.rpc.handle(channel, handler)</code>；<code>/api</code> 是 api-gateway 独占的共享通道，<strong>只允许一个拦截器</strong> —— 自己的通道得另开。</p>
+      <p>· <span class="path">src/client/rpc.ts</span> 说明客户端调用方式：<code>connection.rpc.call(channel, endpoint, payload, signal)</code> → POST <code>/api/&lt;endpoint&gt;</code>。</p>
+      <p>同时发现更原生的 Typert Remote（生成式 descriptor，<code>namespace/method</code> 端点），但自建通道 <code>rpc.handle</code> 对示例插件更简单直接。</p>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">03</div>
+      <h3>宿主端注册通道 <span class="stage build">build</span></h3>
+      <p>在 <code>apply(ctx)</code> 里声明 <code>inject: ['connection']</code>，然后注册 <code>/hello</code> 通道。handler 返回标准结果信封。</p>
+<pre><code><span class="k">export const</span> name = <span class="s">'dsh-hello-plugin'</span>
+<span class="k">export const</span> inject = [<span class="s">'connection'</span>]
+
+<span class="k">export function</span> apply(ctx) {
+  ctx.connection.rpc.handle(<span class="s">'/hello'</span>, <span class="k">async</span> (endpoint, payload) => {
+    <span class="c">// 返回 { ok:true, value } 或 { ok:false, error:{code,message,details} }</span>
+    <span class="k">return</span> { ok: <span class="s">true</span>, value: <span class="s">'pong from host, hello world!'</span> }
+  })
+}</code></pre>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">04</div>
+      <h3>客户端实现（第一版，埋雷） <span class="stage build">build</span></h3>
+      <p>按直觉在组件里直接调用 <code>ctx.connection.rpc.call(...)</code>。插件声明 <code>inject: ['slots', 'connection']</code>，认为 <code>ctx</code> 在组件里也应该可用。</p>
+<pre><code><span class="k">function</span> HelloPill() {
+  <span class="k">const</span> onClick = () =&gt; {
+    ctx.connection.rpc.call(<span class="s">'/hello'</span>, <span class="s">'ping'</span>, { args: { name: <span class="s">'browser'</span> } })
+      .then(<span class="s">/* … */</span>)
+  }
+  <span class="c">// ctx 在哪里？—— 这里没有 ctx。</span>
+}</code></pre>
+    </li>
+
+    <li class="tl-item warn">
+      <div class="tl-num">05</div>
+      <h3>踩坑：<code>ctx is not defined</code> <span class="stage bug">bug</span></h3>
+      <p>点击按钮，浏览器抛 <code>Uncaught ReferenceError: ctx is not defined at onClick</code>。原因立刻清楚了：<code>HelloPill</code> 是模块级组件，而 <code>ctx</code> 只活在 <code>apply(ctx)</code> 闭包里。React 渲染组件时不会把 <code>ctx</code> 传进来 —— 组件闭包作用域里根本没有这个变量。</p>
+      <p class="err">ReferenceError: ctx is not defined</p>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">06</div>
+      <h3>找正确姿势：inject 业务面 <span class="stage explore">explore</span></h3>
+      <p>回到 harness 源码看真实插件怎么把业务服务传给组件。命中 <span class="path">packages/client/ui-slots</span> 与 <span class="path">packages/client/ui-renderer/src/client/scoped-slots.tsx</span>：</p>
+      <p>· <code>slots.register</code> 有第二个选项 <code>inject</code> —— 一个工厂函数，<strong>闭包能捕获 <code>apply(ctx)</code> 的 ctx</strong>，返回值会展开为组件 props。</p>
+      <p>· 渲染器证据（scoped-slots.tsx）：<code>&lt;Comp {...kit} {...injected} {...} /&gt;</code> —— 注入的 props 直接铺到组件上。</p>
+      <p>· 真实范例（<span class="path">packages/client/ui-chat/src/client/apply.ts</span>）：<code>inject: () =&gt; ({ closeDetails: () =&gt; { ctx.layout.closeDetails() } })</code>。</p>
+    </li>
+
+    <li class="tl-item fix">
+      <div class="tl-num">07</div>
+      <h3>修复：组件收 props，服务走 inject 业务面 <span class="stage fix">fix</span></h3>
+      <p>组件改为接收 <code>connection</code> prop；在 <code>register</code> 里通过 <code>inject</code> 把 <code>ctx.connection</code> 传下去。<strong>同时发现一个隐藏点：组件必须直接传，不能包一层 <code>() =&gt; createElement(HelloPill)</code></strong> —— 包一层会让注入的 props 落在包装函数上，组件照样拿不到。</p>
+<pre><code><span class="k">function</span> HelloPill({ connection }) {
+  <span class="k">const</span> onClick = () =&gt; {
+    connection.rpc.call(<span class="s">'/hello'</span>, <span class="s">'ping'</span>, { args: { name: <span class="s">'browser'</span> } })
+      .then(<span class="s">/* … */</span>)
+  }
+  <span class="c">// ctx 不在模块作用域；connection 从 props 来。</span>
+}
+
+<span class="k">function</span> apply(ctx) {
+  ctx.effect(() =&gt; ctx.slots.inject(<span class="s">'shell.overlay'</span>, () =&gt;
+    ctx.slots.register(
+      { name: <span class="s">'shell.overlay'</span>, id: <span class="s">'hello-pill'</span>,
+        inject: () =&gt; ({ connection: ctx.connection }) },
+      HelloPill,   <span class="c">// 直接传组件，别包一层</span>
+    )))
+}</code></pre>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">08</div>
+      <h3>验证 <span class="stage fix">fix</span></h3>
+      <p><code>node --check host.js client.js</code> 通过；注册 id 与包名一致。链路结论：点击按钮 → 客户端 <code>rpc.call</code> → 宿主 <code>/hello</code> handler → 宿主日志输出 <code>client ping: browser</code> → 按钮显示 <code>pong from host</code>。</p>
+    </li>
+  </ol>
+</section>
+
+<section id="rules">
+  <h2><span class="secno">04</span>插件开发规范</h2>
+  <p class="sec-intro">把这些经验压缩成四条可复用的规范。前两条决定「插件长什么样」，后两条决定「两个半区怎么说话」。</p>
+  <div class="conv">
+    <div class="conv-card">
+      <h3>A. 包结构</h3>
+      <div class="sub">package.json · exports · dsh 字段</div>
+      <ul>
+        <li><b>宿主</b>走 <code>exports["."]</code>，<b>客户端</b>走 <code>exports["./client"]</code>；patch 走 <code>exports["./cordis.patch.yml"]</code>。</li>
+        <li>客户端半区<b>不写进</b> cordis.patch.yml —— 由 dsh-client-modules 扫描 <code>dsh.client.platform=web</code> 发现。</li>
+        <li><code>window.__ModuleLoader__.load({ id })</code> 的 <b>id 必须等于包名</b>（图行 id），否则 factory-presence 校验拒绝产物。</li>
+        <li>factory 收到同步 <code>require</code>；平台模块表种子词：<code>react</code>、<code>react/jsx-runtime</code>、<code>react-dom</code>、<code>@deepseek-ai/cordis</code>…</li>
+      </ul>
+    </div>
+    <div class="conv-card">
+      <h3>B. Cordis 插件</h3>
+      <div class="sub">name · apply · inject · ctx.effect</div>
+      <ul>
+        <li>导出 <code>name</code> + <code>apply(ctx)</code>；客户端还要 <code>return { inject, apply }</code>。</li>
+        <li><code>inject: ['服务名']</code> 声明依赖；激活后 <code>ctx.服务名</code> 直接可用。</li>
+        <li>一切副作用包进 <code>ctx.effect(...)</code>，卸载自动回收，不留悬空状态。</li>
+        <li>要把 <code>ctx</code> 里的值递给组件 → 走 slots 的 <code>inject</code> 业务面（见 D）。</li>
+      </ul>
+    </div>
+    <div class="conv-card">
+      <h3>C. 客户端 → 宿主 RPC</h3>
+      <div class="sub">connection · 信封 · 端点语法</div>
+      <ul>
+        <li>客户端 <code>ctx.connection.rpc.call('/hello', 'ping', { args })</code> → <code>Promise&lt;{ ok, value } | { ok, error }&gt;</code>。</li>
+        <li>payload 信封必须是 <code>{ args: {...} }</code>（恰好一个 plain-object 字段）。</li>
+        <li>端点语法：两段 <code>namespace/method</code>，每段 <code>[A-Za-z0-9_$.-]+</code>。</li>
+        <li>宿主 <code>ctx.connection.rpc.handle(channel, handler)</code>；handler 返回标准结果信封。</li>
+        <li><b>不要碰 <code>/api</code></b>：api-gateway 独占，只允许一个 interceptor；自己开独立通道如 <code>/hello</code>。</li>
+      </ul>
+    </div>
+    <div class="conv-card">
+      <h3>D. 插槽（UI）</h3>
+      <div class="sub">slots.register · inject 业务面</div>
+      <ul>
+        <li>悬浮小组件挂 <code>shell.overlay</code>（list 槽，叠加式）；<b>不要挂 <code>root</code></b>（single 槽，会 shadow 掉整个 frame）。</li>
+        <li>标准姿势：<code>ctx.effect(() =&gt; slots.inject('shell.overlay', () =&gt; slots.register({…}, Comp)))</code>。</li>
+        <li>inject 业务面：<code>inject: () =&gt; ({ connection: ctx.connection })</code> —— 闭包捕获 apply 的 ctx，返回值铺成 <code>&lt;Comp {...injected} /&gt;</code>。</li>
+        <li><b>组件直接传</b>（传 <code>HelloPill</code>，不是 <code>() =&gt; createElement(HelloPill)</code>），否则 props 落不到组件上。</li>
+        <li>组件拿服务只靠 props，永不引用模块级 ctx。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="pits">
+  <h2><span class="secno">05</span>踩坑记录</h2>
+  <p class="sec-intro">三个坑，每个都是「文档没写、源码里才有答案」的类型。前两个是同一类问题的两面：作用域。</p>
+  <div class="pits">
+    <div class="pit">
+      <h3>模块级组件引 ctx</h3>
+      <div class="err">ReferenceError: ctx is not defined</div>
+      <p><code>ctx</code> 只活在 <code>apply(ctx)</code> 闭包；React 不会把 ctx 传给模块级组件。组件作用域里没有这个变量。</p>
+      <p class="fix-line"><b>修：</b>服务经 inject 业务面走 props 进组件。</p>
+    </div>
+    <div class="pit">
+      <h3>register 传了包装函数</h3>
+      <div class="err">注入的 props 静默丢失</div>
+      <p>传 <code>() =&gt; createElement(Comp)</code> 时，渲染器的 <code>{...injected}</code> 铺到了包装函数上，组件本体拿不到任何注入。</p>
+      <p class="fix-line"><b>修：</b>直接传组件本身。</p>
+    </div>
+    <div class="pit ok">
+      <h3>想拦截 /api</h3>
+      <div class="err" style="color:var(--ok)">api-gateway 独占</div>
+      <p><code>/api</code> 共享通道只允许一个 interceptor（api-gateway 已占用）。想注册自己的端点会冲突。</p>
+      <p class="fix-line"><b>修：</b>开独立通道 <code>rpc.handle('/hello', …)</code>。</p>
+    </div>
+  </div>
+</section>
+
+<section id="verify">
+  <h2><span class="secno">06</span>验证清单</h2>
+  <p class="sec-intro">改完插件后按此逐项过一遍。前两项是静态检查，后三项要起一个挂了本 bundle 的 dsh profile 实测。</p>
+  <ul class="check">
+    <li><input type="checkbox" id="c1"><label for="c1">语法检查通过：<code>node --check host.js client.js</code></label></li>
+    <li><input type="checkbox" id="c2"><label for="c2"><code>load({ id })</code> 的 id 与包名一致（图行 id）</label></li>
+    <li><input type="checkbox" id="c3"><label for="c3">宿主日志出现 <code>hello-plugin/host.js loaded</code> 与 <code>host loaded</code></label></li>
+    <li><input type="checkbox" id="c4"><label for="c4">Web 端右下角出现「👋 hello world」悬浮按钮</label></li>
+    <li><input type="checkbox" id="c5"><label for="c5">点击按钮：宿主日志追加 <code>client ping: browser</code>，按钮短暂显示 <code>pong from host, hello browser!</code> 后恢复计数</label></li>
+  </ul>
+</section>
+
+<div class="foot">dsh 插件开发手册 · 以 dsh-hello-plugin 开发过程为样本 · 规范条目均可在 deepseek-harness 源码（packages/client/connection · packages/client/ui-slots · packages/client/ui-renderer）中找到依据。</div>
