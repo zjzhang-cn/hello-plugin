@@ -17,6 +17,17 @@
 
 ---
 
+## 2026-08-28 — 整理学习路径并按章节由简入深，移除 HTML 手册
+
+**类型**：文档
+**涉及**：`docs/learning-path.md`（新增）、删除 `docs/dsh-plugin-handbook.html`、`docs/plugin-capability-catalog.html`、`CLAUDE.md`
+**背景 / 问题**：学习材料散落且无顺序；HTML 手册冗余（与 Markdown 重复），决定全部用 Markdown。
+**改动**：
+- 新增 `docs/learning-path.md`：按 4 阶段 11 章组织学习路径（打地基 / 双向通信 / 能力全景 / 工程纪律），每章含「学什么 / 读什么 / 动手做 / 产出」，并链接现有 Markdown 文档。
+- 删除两份 HTML 手册（`dsh-plugin-handbook.html`、`plugin-capability-catalog.html`），docs 全部为 Markdown。
+- CLAUDE.md 仓库布局同步更新。
+**验证**：docs 目录仅剩 `.md` 文件；grep 确认无残留 HTML 引用（历史 dev-log 条目除外，已一并清理）。
+
 ## 2026-08-28 — README 增加开发日志简述章节
 
 **类型**：文档
@@ -36,7 +47,7 @@
 ## 2026-08-28 — hello/notice 示例事件改为每 5 秒推送
 
 **类型**：功能
-**涉及**：`host.js`、`README.md`、`docs/plugin-dev-handbook.md`、`docs/dsh-plugin-handbook.html`
+**涉及**：`host.js`、`README.md`、`docs/plugin-dev-handbook.md`
 **背景 / 问题**：原实现「启动 5 秒后自动发一次事件」，无法持续演示「host 主动推送 → client 持续更新」。
 **改动**：`host.js` 用 `setInterval` 替代一次性 `setTimeout`，每 5 秒 emit 一次 `hello/notice`（带当前时间戳）；同步更新 README 与手册的验证描述。
 **验证**：`node --check` 通过；文档描述同步为「每 5 秒出现新的气泡条」。
@@ -44,15 +55,15 @@
 ## 2026-08-28 — 新增 dsh 插件能力清单（学习文档）
 
 **类型**：文档
-**涉及**：`docs/plugin-capability-catalog.md`、`docs/plugin-capability-catalog.html`、`cordis.patch.yml`
+**涉及**：`docs/plugin-capability-catalog.md`、`cordis.patch.yml`
 **背景 / 问题**：需要一份 dsh 对 plugin 开放的所有能力面的清单，供后续学习。
 **改动**：基于 harness 源码与 `capability-seams.md` 权威目录整理：Cordis 内核、宿主端服务 6 类 52 项、客户端服务、双向通信通道 6 种、插槽体系、工具贡献、关键约束、源码地图。同时把 `cordis.patch.yml` 的宿主插件 `name` 改为可移植包名。
-**验证**：HTML 标签配对检查通过。
+**验证**：Markdown 表格结构检查通过。
 
 ## 2026-08-28 — 宿主主动推送事件到客户端（长轮询）
 
 **类型**：功能
-**涉及**：`host.js`、`client.js`、`README.md`、`docs/plugin-dev-handbook.md`、`docs/dsh-plugin-handbook.html`
+**涉及**：`host.js`、`client.js`、`README.md`、`docs/plugin-dev-handbook.md`
 **背景 / 问题**：第二步开发 —— 让 host 主动触发事件、client 收到。调研发现 dsh 标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`registerRemoteEvents` 是单例（api-remotes 占用），事件名须进 allowlist。
 **改动**：
 - 宿主维护 `pending` 队列 + `waiters` 挂起表，`emit(event, args)` 广播唤醒所有 waiter；`/hello/events/poll` 端点挂起等待（15 秒超时 / abort 清理）。
@@ -63,7 +74,7 @@
 ## 2026-08-28 — 客户端点击调用宿主（接通 /hello RPC）
 
 **类型**：功能
-**涉及**：`host.js`、`client.js`、`README.md`、`docs/dsh-plugin-handbook.html`、`docs/plugin-dev-handbook.md`、`.gitignore`
+**涉及**：`host.js`、`client.js`、`README.md`、`docs/plugin-dev-handbook.md`、`.gitignore`
 **背景 / 问题**：第一步开发 —— client 点击调用 host。
 **改动**：
 - 宿主 `inject: ['connection']`，`ctx.connection.rpc.handle('/hello', handler)` 注册通道。

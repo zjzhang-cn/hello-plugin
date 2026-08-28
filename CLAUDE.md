@@ -14,10 +14,9 @@ dev.patch.yml            开发用 patch（绝对路径，已 gitignore）
 package.json             包清单：exports 两个半区 + dsh 集成字段
 docs/
   dev-log.md                        开发日志（每次功能/修复必记，最新在上）
+  learning-path.md                  学习路径（按章节由简入深）
   plugin-dev-handbook.md            开发手册（过程 + 规范 + 踩坑）
   plugin-capability-catalog.md       dsh 插件能力清单（服务/通道/插槽全目录）
-  dsh-plugin-handbook.html           手册排版版（浏览器阅读）
-  plugin-capability-catalog.html     能力清单排版版
 ```
 
 ## 开发日志（强制）
