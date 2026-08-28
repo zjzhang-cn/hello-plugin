@@ -120,11 +120,53 @@ function apply(ctx) {
 
 `node --check host.js client.js` 通过；注册 id 与包名一致。链路结论：点击按钮 → 客户端 `rpc.call` → 宿主 `/hello` handler → 宿主日志输出 `client ping: browser` → 按钮显示 `pong from host`。
 
+## 03.9 第二步：宿主主动推送事件到客户端
+
+需求反转方向：不再等客户端请求，而是 host 主动触发事件、client 收到。
+
+### 调研：标准事件推送是什么样
+
+在 harness 源码里找到两条线索：
+
+- **标准机制（Remote events 转发）**：宿主 `ctx.emit(event)` → `api-remotes` 插件（`inject: ['typertGateway']`）监听后经网关广播 → 客户端 `ctx.remote.$on(event, listener)` 接收。这是 dsh 原生的宿主→客户端事件通道。
+- **两个硬约束**：
+  1. `typertGateway.registerRemoteEvents` 是**单例** —— `api-remotes` 已注册唯一的转发源，插件再调会抛 `already registered`。
+  2. 转发事件名必须在 `API_REMOTE_FORWARDED_EVENTS` allowlist 里（`api-remotes/src/remote-events.ts`），自定义事件名进不去。
+
+结论：**第三方插件的自定义事件无法走标准 Remote events 转发**（除非改 harness 的 allowlist）。
+
+### 决策：长轮询复用 /hello 通道
+
+经过方案对比（AskUserQuestion），选定**长轮询**：完全复用已验证的 `/hello` 通道，不改 harness，效果上 host 主动 emit 的事件能近乎实时到达 client。
+
+宿主端维护 `pending` 队列 + `waiters` 挂起表：
+
+- `emit(event, args)`：事件入队，唤醒所有挂起 poll。
+- `/hello/events/poll` 端点：有事件立即返回全部；无事件挂起等待（15 秒超时返回空数组；abort 清理等待者）。
+- 语义是**广播**：一个事件被多个并发 poll 各自看到（多标签页都收得到）。
+
+客户端挂载后跑长轮询循环：反复 `rpc.call('/hello', 'events/poll', { args: {} })`，空数组立刻再来一次（常驻一个等待连接），收到事件渲染为气泡条，失败退避重试。
+
+### 过程中的并发审查
+
+- 初版 `waiter` 是**单槽**，多个并发 poll 会互相覆盖 → 改为 `waiters` 数组。
+- 初版广播在 resolve 参数里 `splice(0)`，第一个 waiter 拿光、后续拿空 → 改为 emit 时**先取一次快照再分发**，每个 waiter 都拿到同一批。
+- 超时与 abort 都要从 `waiters` 里移除自己，否则挂起连接泄漏。
+
+长轮询核心逻辑用独立脚本验证（5 场景全过）：等待中唤醒、多 waiter 广播、超时返回空、abort 清理、已有事件立即返回。
+
 ---
 
 ## 04 插件开发规范
 
-把这些经验压缩成四条可复用的规范。前两条决定「插件长什么样」，后两条决定「两个半区怎么说话」。
+把这些经验压缩成五条可复用的规范。前两条决定「插件长什么样」，后两条决定「两个半区怎么说话」，第五条是「宿主 → 客户端事件推送」的结论。
+
+### E. 宿主 → 客户端事件推送
+
+- **标准路径是 Remote events 转发**：`ctx.remote.$on(event)` 收 `ctx.emit(event)`；但事件名必须进 `api-remotes` 的 allowlist，且 `registerRemoteEvents` 是单例 —— **自定义事件不适用**。
+- **第三方插件自定义事件**：复用自有 `rpc.handle` 通道做**长轮询** —— 宿主维护事件队列 + 挂起表，`events/poll` 端点挂起等待，客户端常驻一个 poll 连接。
+- 长轮询三个要点：**广播语义**（一次快照分发所有 waiter）、**超时兜底**（挂起有上限）、**abort 清理**（连接断开不泄漏）。
+- 自建 `rpc.handle` 通道在浏览器端是**请求-响应**的（`rpc.open` 只存在于 worker 隧道）；真正的服务端推送需要 api-gateway 的 WebSocket mux（Typert stream），自定义通道不享有。
 
 ### A. 包结构
 
@@ -160,13 +202,15 @@ function apply(ctx) {
 
 ## 05 踩坑记录
 
-三个坑，每个都是「文档没写、源码里才有答案」的类型。前两个是同一类问题的两面：作用域。
+四个坑。前两个是同一类问题的两面：作用域；后两个是长轮询的并发正确性。
 
 | 坑 | 现象 | 原因 | 修法 |
 | --- | --- | --- | --- |
 | 模块级组件引 ctx | `ReferenceError: ctx is not defined` | `ctx` 只活在 `apply(ctx)` 闭包；React 不会把 ctx 传给模块级组件 | 服务经 inject 业务面走 props 进组件 |
 | register 传了包装函数 | 注入的 props 静默丢失 | 渲染器的 `{...injected}` 铺到了包装函数上，组件本体拿不到 | 直接传组件本身 |
 | 想拦截 /api | api-gateway 独占 | `/api` 共享通道只允许一个 interceptor（api-gateway 已占用） | 开独立通道 `rpc.handle('/hello', …)` |
+| 长轮询 waiter 单槽 | 并发 poll 互相覆盖，先到的请求永远挂起 | 单槽记录一个挂起请求 | 用 `waiters` 数组，事件到达唤醒全部 |
+| 广播 splice 竞态 | 第一个 waiter 拿光队列，后续拿空 | resolve 参数里 `splice(0)`，事件被第一个消费者耗尽 | emit 时先 `splice(0)` 一次快照，再分发给所有 waiter |
 
 ---
 
@@ -179,7 +223,8 @@ function apply(ctx) {
 - [ ] 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`
 - [ ] Web 端右下角出现「👋 hello world」悬浮按钮
 - [ ] 点击按钮：宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host, hello browser!` 后恢复计数
+- [ ] 宿主启动约 5 秒后（无需操作）按钮上方出现气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...`
 
 ---
 
-*规范条目均可在 deepseek-harness 源码中找到依据：`packages/client/connection`（RPC 信封与通道）、`packages/client/ui-slots` + `packages/client/ui-renderer`（inject 业务面与渲染器展开）、`packages/api/gateway`（/api 独占）。*
+*规范条目均可在 deepseek-harness 源码中找到依据：`packages/client/connection`（RPC 信封与通道）、`packages/client/ui-slots` + `packages/client/ui-renderer`（inject 业务面与渲染器展开）、`packages/api/gateway`（/api 独占与 Remote events 单例）。*

@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `host.js` | 宿主半区：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；同时注册一个 `/hello` RPC 通道供客户端调用 |
-| `client.js` | 客户端半区：浏览器 bundle（classic script），注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主 |
+| `host.js` | 宿主半区：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道供客户端调用，并提供事件队列，可主动向客户端推送事件 |
+| `client.js` | 客户端半区：浏览器 bundle（classic script），注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主，同时以长轮询方式接收宿主推送的事件 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
 | `package.json` | 包清单，声明两个半区的导出与 dsh 集成字段 |
 
@@ -30,6 +30,19 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 宿主机日志里会输出 `client ping: ...`，可用于确认双向链路打通。
 
+## 宿主主动推送到客户端
+
+`dsh` 的标准「宿主 → 客户端」事件推送走 api-gateway 的 Remote events 转发（`ctx.emit` → 网关广播 → 客户端 `ctx.remote.$on`）。但它依赖应用级 `api-remotes` 的 allowlist，且 `typertGateway.registerRemoteEvents` 是**单例**（已被 `api-remotes` 占用）—— 第三方插件的自定义事件名无法进 allowlist。
+
+因此本插件采用**长轮询**复用已验证的 `/hello` 通道实现反向推送，不改 harness：
+
+- **宿主端**：维护一个事件队列 `pending` + 挂起等待者 `waiters`。`emit(event, args)` 把事件入队并唤醒所有挂起的 poll。`/hello/events/poll` 端点：有事件立即返回全部，无事件则挂起等待（15 秒超时返回空数组，abort 时清理等待者）。语义是**广播**：一个事件被多个并发 poll 各自看到。
+- **客户端**：`HelloPill` 挂载后启动长轮询循环，反复 `connection.rpc.call('/hello', 'events/poll', { args: {} })`。收到空数组立即发起下一次（保持一个常驻等待连接）；收到事件则展示为按钮上方的气泡条（最新一条高亮）；传输失败退避 3 秒重试。
+
+宿主启动 5 秒后会自动 emit 一个 `hello/notice` 事件，无需任何客户端操作即可在 Web 端看到气泡 —— 这就是「host 主动触发事件到 client」。
+
+长轮询核心逻辑已用独立脚本验证（5 场景：等待中唤醒、多 waiter 广播、超时、abort、已有事件立即返回）。
+
 ## 开发与验证
 
 本仓库自身**没有**构建/测试设施（无 scripts、无依赖），它是被 deepseek-harness 工作区消费的插件。开发流程：
@@ -40,6 +53,7 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
    ```
 2. 启动一个挂载了本 bundle 的 dsh profile，宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端应能看到右下角的「👋 hello world」悬浮按钮。
 3. 点击悬浮按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，随后恢复计数 —— 表示客户端 → 宿主的 RPC 链路打通。
+4. 宿主启动约 5 秒后（无需操作）Web 端按钮上方出现气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路打通。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 

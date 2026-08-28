@@ -352,7 +352,7 @@
 
 <p class="kicker">Learning Handbook · DeepSeek Harness</p>
 <h1>dsh 插件开发手册</h1>
-<p class="lede">以 <code>dsh-hello-plugin</code> 为样本，记录「双面插件」从零接通 <em>客户端点击 → 宿主</em> 的完整开发过程，以及逐步沉淀下来的插件开发规范。适合照着写第一个 dsh 插件的人。</p>
+<p class="lede">以 <code>dsh-hello-plugin</code> 为样本，记录「双面插件」从零接通 <em>客户端点击 → 宿主</em> 与 <em>宿主主动推送 → 客户端</em> 两个方向的完整开发过程，以及逐步沉淀下来的插件开发规范。适合照着写第一个 dsh 插件的人。</p>
 <p class="meta"><span>2026-08 · 编写于实现之后</span><span>样本仓库 dsh-hello-plugin</span><span>配合 deepseek-harness 源码阅读</span></p>
 
 <nav class="toc">
@@ -489,12 +489,39 @@
       <h3>验证 <span class="stage fix">fix</span></h3>
       <p><code>node --check host.js client.js</code> 通过；注册 id 与包名一致。链路结论：点击按钮 → 客户端 <code>rpc.call</code> → 宿主 <code>/hello</code> handler → 宿主日志输出 <code>client ping: browser</code> → 按钮显示 <code>pong from host</code>。</p>
     </li>
+
+    <li class="tl-item">
+      <div class="tl-num">09</div>
+      <h3>第二步：宿主主动推送事件 <span class="stage explore">explore</span></h3>
+      <p>需求反转方向：不再等客户端请求，而是 host 主动触发事件、client 收到。在 harness 源码里找到两条线索：</p>
+      <p>· <b>标准机制（Remote events 转发）</b>：宿主 <code>ctx.emit(event)</code> → <code>api-remotes</code> 插件监听后经网关广播 → 客户端 <code>ctx.remote.$on(event, listener)</code> 接收。这是 dsh 原生的宿主→客户端事件通道。</p>
+      <p>· <b>两个硬约束</b>：<code>typertGateway.registerRemoteEvents</code> 是<b>单例</b>（<code>api-remotes</code> 已占用，再调抛 <code>already registered</code>）；转发事件名必须在 <code>API_REMOTE_FORWARDED_EVENTS</code> allowlist 里 —— <b>自定义事件名进不去</b>。</p>
+      <p>结论：第三方插件的自定义事件<b>无法走标准 Remote events 转发</b>（除非改 harness 的 allowlist）。</p>
+    </li>
+
+    <li class="tl-item">
+      <div class="tl-num">10</div>
+      <h3>决策：长轮询复用 /hello 通道 <span class="stage build">build</span></h3>
+      <p>经方案对比（AskUserQuestion），选定<b>长轮询</b>：完全复用已验证的 <code>/hello</code> 通道，不改 harness，效果上 host 主动 emit 的事件能近乎实时到达 client。</p>
+      <p>宿主端维护 <code>pending</code> 队列 + <code>waiters</code> 挂起表：</p>
+      <p>· <code>emit(event, args)</code>：事件入队，唤醒所有挂起 poll。</p>
+      <p>· <code>/hello/events/poll</code> 端点：有事件立即返回全部；无事件挂起等待（15 秒超时返回空数组；abort 清理等待者）。</p>
+      <p>· 语义是<b>广播</b>：一个事件被多个并发 poll 各自看到（多标签页都收得到）。</p>
+      <p>客户端挂载后跑长轮询循环：反复 <code>rpc.call('/hello', 'events/poll', { args: {} })</code>，空数组立刻再来一次（常驻一个等待连接），收到事件渲染为气泡条，失败退避重试。</p>
+    </li>
+
+    <li class="tl-item warn">
+      <div class="tl-num">11</div>
+      <h3>并发审查：两个竞态 <span class="stage bug">bug</span></h3>
+      <p>初版 <code>waiter</code> 是<b>单槽</b>：多个并发 poll 会互相覆盖，先到的请求永远挂起 → 改为 <code>waiters</code> 数组。初版广播在 resolve 参数里 <code>splice(0)</code>：第一个 waiter 拿光队列、后续拿空 → 改为 emit 时<b>先取一次快照再分发</b>，每个 waiter 都拿到同一批。超时与 abort 都要从 <code>waiters</code> 里移除自己，否则挂起连接泄漏。</p>
+      <p class="fix-line">长轮询核心逻辑用独立脚本验证（5 场景全过）：等待中唤醒、多 waiter 广播、超时返回空、abort 清理、已有事件立即返回。</p>
+    </li>
   </ol>
 </section>
 
 <section id="rules">
   <h2><span class="secno">04</span>插件开发规范</h2>
-  <p class="sec-intro">把这些经验压缩成四条可复用的规范。前两条决定「插件长什么样」，后两条决定「两个半区怎么说话」。</p>
+  <p class="sec-intro">把这些经验压缩成五条可复用的规范。前两条决定「插件长什么样」，后两条决定「两个半区怎么说话」，第五条是「宿主 → 客户端事件推送」的结论。</p>
   <div class="conv">
     <div class="conv-card">
       <h3>A. 包结构</h3>
@@ -538,12 +565,22 @@
         <li>组件拿服务只靠 props，永不引用模块级 ctx。</li>
       </ul>
     </div>
+    <div class="conv-card">
+      <h3>E. 宿主 → 客户端事件推送</h3>
+      <div class="sub">ctx.remote.$on · 长轮询 · 广播语义</div>
+      <ul>
+        <li><b>标准路径是 Remote events 转发</b>：<code>ctx.remote.$on(event)</code> 收 <code>ctx.emit(event)</code>；但事件名必须进 <code>api-remotes</code> 的 allowlist，且 <code>registerRemoteEvents</code> 是单例 —— <b>自定义事件不适用</b>。</li>
+        <li><b>第三方插件自定义事件</b>：复用自有 <code>rpc.handle</code> 通道做<b>长轮询</b> —— 宿主维护事件队列 + 挂起表，<code>events/poll</code> 端点挂起等待，客户端常驻一个 poll 连接。</li>
+        <li>长轮询三个要点：<b>广播语义</b>（一次快照分发所有 waiter）、<b>超时兜底</b>（挂起有上限）、<b>abort 清理</b>（连接断开不泄漏）。</li>
+        <li>自建 <code>rpc.handle</code> 通道在浏览器端是<b>请求-响应</b>的（<code>rpc.open</code> 只存在于 worker 隧道）；真正的服务端推送需要 api-gateway 的 WebSocket mux（Typert stream），自定义通道不享有。</li>
+      </ul>
+    </div>
   </div>
 </section>
 
 <section id="pits">
   <h2><span class="secno">05</span>踩坑记录</h2>
-  <p class="sec-intro">三个坑，每个都是「文档没写、源码里才有答案」的类型。前两个是同一类问题的两面：作用域。</p>
+  <p class="sec-intro">五个坑。前两个是同一类问题的两面：作用域；后三个是长轮询的并发正确性。</p>
   <div class="pits">
     <div class="pit">
       <h3>模块级组件引 ctx</h3>
@@ -563,19 +600,32 @@
       <p><code>/api</code> 共享通道只允许一个 interceptor（api-gateway 已占用）。想注册自己的端点会冲突。</p>
       <p class="fix-line"><b>修：</b>开独立通道 <code>rpc.handle('/hello', …)</code>。</p>
     </div>
+    <div class="pit">
+      <h3>长轮询 waiter 单槽</h3>
+      <div class="err">并发 poll 互相覆盖</div>
+      <p>单槽只记一个挂起请求，第二个 poll 覆盖第一个，先到的请求永远挂起直到超时。</p>
+      <p class="fix-line"><b>修：</b>用 <code>waiters</code> 数组，事件到达唤醒全部。</p>
+    </div>
+    <div class="pit">
+      <h3>广播 splice 竞态</h3>
+      <div class="err">后续 waiter 拿到空数组</div>
+      <p>resolve 参数里 <code>splice(0)</code>：第一个 waiter 拿光队列，后续 waiter 只拿到空。</p>
+      <p class="fix-line"><b>修：</b>emit 时先 <code>splice(0)</code> 一次快照，再分发给所有 waiter。</p>
+    </div>
   </div>
 </section>
 
 <section id="verify">
   <h2><span class="secno">06</span>验证清单</h2>
-  <p class="sec-intro">改完插件后按此逐项过一遍。前两项是静态检查，后三项要起一个挂了本 bundle 的 dsh profile 实测。</p>
+  <p class="sec-intro">改完插件后按此逐项过一遍。前两项是静态检查，其余要起一个挂了本 bundle 的 dsh profile 实测。</p>
   <ul class="check">
     <li><input type="checkbox" id="c1"><label for="c1">语法检查通过：<code>node --check host.js client.js</code></label></li>
     <li><input type="checkbox" id="c2"><label for="c2"><code>load({ id })</code> 的 id 与包名一致（图行 id）</label></li>
     <li><input type="checkbox" id="c3"><label for="c3">宿主日志出现 <code>hello-plugin/host.js loaded</code> 与 <code>host loaded</code></label></li>
     <li><input type="checkbox" id="c4"><label for="c4">Web 端右下角出现「👋 hello world」悬浮按钮</label></li>
     <li><input type="checkbox" id="c5"><label for="c5">点击按钮：宿主日志追加 <code>client ping: browser</code>，按钮短暂显示 <code>pong from host, hello browser!</code> 后恢复计数</label></li>
+    <li><input type="checkbox" id="c6"><label for="c6">宿主启动约 5 秒后（无需操作）按钮上方出现气泡条 <code>hello/notice: host is alive at ...</code>，宿主日志追加 <code>emit: hello/notice ...</code></label></li>
   </ul>
 </section>
 
-<div class="foot">dsh 插件开发手册 · 以 dsh-hello-plugin 开发过程为样本 · 规范条目均可在 deepseek-harness 源码（packages/client/connection · packages/client/ui-slots · packages/client/ui-renderer）中找到依据。</div>
+<div class="foot">dsh 插件开发手册 · 以 dsh-hello-plugin 开发过程为样本 · 规范条目均可在 deepseek-harness 源码（packages/client/connection · packages/client/ui-slots · packages/client/ui-renderer · packages/api/gateway）中找到依据。</div>
