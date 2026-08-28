@@ -42,12 +42,15 @@ window.__ModuleLoader__.load({
           inflight = true
           try {
             const result = await connection.rpc.call('/hello', 'events/poll', { args: {} })
+            // 无论有无事件，await 结束都要复位 inflight，否则循环只跑一轮。
+            inflight = false
             if (!cancelled && result.ok && Array.isArray(result.value) && result.value.length > 0) {
               const incoming = result.value.map((item) => `${item.event}: ${item.args.join(' ')}`)
               setEvents((prev) => [...incoming.reverse(), ...prev].slice(0, 5))
             }
           } catch (error) {
             // 传输失败：稍作退避再试，避免热循环。
+            inflight = false
             if (!cancelled) {
               setTimeout(poll, 3_000)
               return

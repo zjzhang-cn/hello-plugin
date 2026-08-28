@@ -1,0 +1,78 @@
+# 开发日志（Development Log）
+
+> 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
+>
+> 记录格式（简版即可，保留关键信息）：
+> ```markdown
+> ## YYYY-MM-DD — 标题
+>
+> **类型**：功能 / BUG 修复 / 文档 / 重构
+> **涉及**：文件清单
+> **背景 / 问题**：一句话说明为什么
+> **改动**：关键点
+> **验证**：如何确认生效（node --check / 实测 / 脚本断言）
+> ```
+
+---
+
+## 2026-08-28 — 修复客户端长轮询循环只跑一轮的 bug
+
+**类型**：BUG 修复
+**涉及**：`client.js`
+**背景 / 问题**：客户端 `events/poll` 长轮询只拉取一次就停止，之后不再更新宿主推送的消息。根因：`poll()` 内 `inflight` 置 `true` 后**从未复位**，第二轮 `poll()` 被 `if (cancelled || inflight) return` 挡死，循环终止。用独立脚本复现确认（10ms 内只执行 1 次）。
+**改动**：在 `await connection.rpc.call(...)` 结束后（含 try 成功与 catch 两条路径）都加 `inflight = false`，使循环能持续拉取；失败路径保持 3 秒退避。
+**验证**：`node --check client.js` 通过；复现脚本显示修复后循环持续执行。
+
+## 2026-08-28 — hello/notice 示例事件改为每 5 秒推送
+
+**类型**：功能
+**涉及**：`host.js`、`README.md`、`docs/plugin-dev-handbook.md`、`docs/dsh-plugin-handbook.html`
+**背景 / 问题**：原实现「启动 5 秒后自动发一次事件」，无法持续演示「host 主动推送 → client 持续更新」。
+**改动**：`host.js` 用 `setInterval` 替代一次性 `setTimeout`，每 5 秒 emit 一次 `hello/notice`（带当前时间戳）；同步更新 README 与手册的验证描述。
+**验证**：`node --check` 通过；文档描述同步为「每 5 秒出现新的气泡条」。
+
+## 2026-08-28 — 新增 dsh 插件能力清单（学习文档）
+
+**类型**：文档
+**涉及**：`docs/plugin-capability-catalog.md`、`docs/plugin-capability-catalog.html`、`cordis.patch.yml`
+**背景 / 问题**：需要一份 dsh 对 plugin 开放的所有能力面的清单，供后续学习。
+**改动**：基于 harness 源码与 `capability-seams.md` 权威目录整理：Cordis 内核、宿主端服务 6 类 52 项、客户端服务、双向通信通道 6 种、插槽体系、工具贡献、关键约束、源码地图。同时把 `cordis.patch.yml` 的宿主插件 `name` 改为可移植包名。
+**验证**：HTML 标签配对检查通过。
+
+## 2026-08-28 — 宿主主动推送事件到客户端（长轮询）
+
+**类型**：功能
+**涉及**：`host.js`、`client.js`、`README.md`、`docs/plugin-dev-handbook.md`、`docs/dsh-plugin-handbook.html`
+**背景 / 问题**：第二步开发 —— 让 host 主动触发事件、client 收到。调研发现 dsh 标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`registerRemoteEvents` 是单例（api-remotes 占用），事件名须进 allowlist。
+**改动**：
+- 宿主维护 `pending` 队列 + `waiters` 挂起表，`emit(event, args)` 广播唤醒所有 waiter；`/hello/events/poll` 端点挂起等待（15 秒超时 / abort 清理）。
+- 客户端挂载后跑长轮询循环，事件渲染为按钮上方气泡条。
+- 并发审查：waiter 从单槽改数组；广播改为先 splice 快照再分发，避免第一个 waiter 拿光。
+**验证**：长轮询核心逻辑独立脚本验证 5 场景 10 断言全过。
+
+## 2026-08-28 — 客户端点击调用宿主（接通 /hello RPC）
+
+**类型**：功能
+**涉及**：`host.js`、`client.js`、`README.md`、`docs/dsh-plugin-handbook.html`、`docs/plugin-dev-handbook.md`、`.gitignore`
+**背景 / 问题**：第一步开发 —— client 点击调用 host。
+**改动**：
+- 宿主 `inject: ['connection']`，`ctx.connection.rpc.handle('/hello', handler)` 注册通道。
+- 客户端 `HelloPill` 点击时 `connection.rpc.call('/hello', 'ping', { args })`。
+- 修复：`HelloPill` 从模块级组件引用 `ctx` 报 `ReferenceError: ctx is not defined` → 改为通过 `slots.register` 的 `inject` 业务面把 `connection` 传成组件 prop；组件直接传（非 `() => createElement(...)`）。
+**验证**：`node --check` 通过；注册 id 与包名一致。
+
+## 2026-08-28 — 修正插件 ID 与包名一致
+
+**类型**：BUG 修复
+**涉及**：`client.js`
+**背景 / 问题**：`load({ id })` 注册的 id 与包名不一致，模块系统以包名为图行 id，factory-presence 校验会拒绝产物。
+**改动**：注册 id 统一为 `dsh-hello-plugin`。
+**验证**：`node --check` 通过。
+
+## 2026-08-28 — 添加 dsh-hello-plugin 插件初始代码
+
+**类型**：实现
+**涉及**：`host.js`、`client.js`、`cordis.patch.yml`、`package.json`、`README.md`
+**背景 / 问题**：仓库初始化 —— 最小可运行的双面插件骨架。
+**改动**：宿主半区打日志；客户端半区渲染悬浮按钮并注入 `shell.overlay` 插槽；patch 层插入宿主插件行。
+**验证**：`node --check` 通过。

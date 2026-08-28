@@ -10,6 +10,7 @@
 | `client.js` | 客户端半区：浏览器 bundle（classic script），注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主，同时以长轮询方式接收宿主推送的事件 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
 | `package.json` | 包清单，声明两个半区的导出与 dsh 集成字段 |
+| `docs/dev-log.md` | 开发日志：每次功能 / BUG 修改 / 实现的记录（最新在上） |
 
 ## 架构：双面插件如何接入 dsh
 
