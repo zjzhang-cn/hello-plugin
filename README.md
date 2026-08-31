@@ -77,12 +77,12 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 ## Google 新闻会话（Agent 新会话）
 
-点击待办卡片头部的「📰」按钮，宿主会发起一个**新会话**，会话里的 Agent 通过工具获取最新 Google 新闻并总结 —— LLM 交互全过程都在这个新会话中，dsh Web UI 的会话列表会自动出现该会话，点开即可查看完整过程：
+点击悬浮区域独立的「📰 获取新闻」按钮（青色，与 hello 按钮并列），宿主会发起一个**新会话**，会话里的 Agent 通过工具获取最新 Google 新闻并总结 —— LLM 交互全过程都在这个新会话中，dsh Web UI 的会话列表会自动出现该会话，点开即可查看完整过程：
 
 - **宿主端点**：`/hello/news/start`（`{ args: {} }`）。`ctx.agents.create()` 创建新会话（sessionId `news-<uuid>`，agentOptions 取 `llm.config.json` 的 provider/model）→ `setup` 中注册**作用域工具** `google_news` → `agent.followup()` 让 Agent 获取新闻并总结 → 立即返回 `{ sessionId }`（不等待完成，会话后台运行）。
 - **google_news 工具**：`fetch('https://news.google.com/rss?hl=...')`（Node 全局 fetch）→ 正则解析 `<item>` 的标题/链接/发布时间，取前 15 条。工具通过 `ctx.tools.register` 从 agentCtx 注册（`ScopedLayers` 作用域机制），**仅该会话的 Agent 可见**，不污染全局工具表。
 - **会话可见性**：宿主创建会话自动触发 `api-session/added` Remote 事件，dsh Web UI 会话列表自动出现新会话（无需客户端刷新）；点开可见 user/message → google_news 工具调用（tool/call + tool/result 含新闻列表）→ assistant 总结的完整交互。
-- **客户端**：待办卡片头部新增「📰」按钮（请求中变 `…`）→ 调用 `news/start` → 卡片下方显示「✅ 已创建会话 <id>，在会话列表查看 Agent 总结」；失败显示红色错误条（如 `llm-not-configured`）。
+- **客户端**：悬浮区域独立「📰 获取新闻」按钮（请求中显示「获取中…」）→ 调用 `news/start` → 按钮上方显示「✅ 已创建会话 <id>，在会话列表查看 Agent 总结」；失败显示红色错误条（如 `llm-not-configured`）。
 - 需要 `llm.config.json` 配置 provider/model；Google News RSS 抓取无需任何 key。
 
 ## 宿主主动推送到客户端（长轮询）
@@ -110,8 +110,9 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 获取新闻入口独立为悬浮按钮** — 「📰 获取新闻」从待办卡片 header 移出，成为与 hello 按钮并列的独立按钮（青色），新闻提示条独立显示；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 修复 google_news 工具 schema 被模型 API 拒绝** — 工具 parameters 从简写改为完整 JSON Schema（`type: 'object'` + properties），否则模型 API 报 `type: null`；详见 [开发日志](docs/dev-log.md)。
-- **2026-08-31 客户端点击发起新会话：Agent 获取 Google 新闻并总结** — 待办卡片新增「📰」按钮 → 宿主 `ctx.agents.create` 发起新会话（`news-<uuid>`），setup 中注册作用域工具 `google_news`（抓取 Google News RSS）→ Agent 获取最新新闻并总结；新会话自动出现在 Web UI 会话列表（api-session/added），可查看完整 LLM 交互；详见 [开发日志](docs/dev-log.md)。
+- **2026-08-31 客户端点击发起新会话：Agent 获取 Google 新闻并总结** — 「📰 获取新闻」按钮 → 宿主 `ctx.agents.create` 发起新会话（`news-<uuid>`），setup 中注册作用域工具 `google_news`（抓取 Google News RSS）→ Agent 获取最新新闻并总结；新会话自动出现在 Web UI 会话列表（api-session/added），可查看完整 LLM 交互；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 LLM 分析与评论** — 点击待办项 → host 取 issue 详情（ADF 转文本）→ `ctx.llm.stream` 生成分析 → 客户端卡片内确认 → 同意则 ADF 格式写回 Jira 评论；LLM 配置走工程根 `llm.config.json`（provider/model，可配置），dsh-llm 改为 external 运行时依赖；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端交互优化** — 长轮询气泡只保留最新一条；「我的待办」头部新增 ⟳ 刷新按钮；hello 按钮 ping 后 1 秒恢复 `hello world x{n}` 并计数 +1；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 恢复长轮询与 ping（学习项目只增不删）** — 上轮待办改动误删长轮询，已完整恢复（`events/poll` + 每 5 秒 `hello/notice` 推送 + 客户端气泡条），与待办列表、ping 共存；详见 [开发日志](docs/dev-log.md)。
@@ -147,7 +148,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 4. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路（长轮询）打通。
 5. 配置 Jira 凭据（任选其一，工程文件优先）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时显示 `Jira: jira-not-configured` 提示条。开发时在工程根放 `jira.config.json`（见 `jira.config.example.json`）即可，无需改全局 settings.yaml。
 6. 在工程根放 `llm.config.json`（见 `llm.config.example.json`）配置 provider/model 后，点击某个待办项：出现「LLM 正在分析…」→ 展示分析面板 → 点「添加到评论」写回 Jira 并显示「✅ 已添加到 Jira 评论」；未配置 LLM 时显示分析失败提示。
-7. 点击卡片头部「📰」按钮：卡片下方显示「✅ 已创建会话 news-xxx，在会话列表查看 Agent 总结」；dsh Web UI 会话列表自动出现该会话，点开可见完整 LLM 交互（user/message → google_news 工具调用含新闻列表 → assistant 总结）。未配置 LLM 时显示 `llm-not-configured` 错误条。
+7. 点击「📰 获取新闻」按钮：按钮上方显示「✅ 已创建会话 news-xxx，在会话列表查看 Agent 总结」；dsh Web UI 会话列表自动出现该会话，点开可见完整 LLM 交互（user/message → google_news 工具调用含新闻列表 → assistant 总结）。未配置 LLM 时显示 `llm-not-configured` 错误条。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 

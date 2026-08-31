@@ -267,16 +267,6 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
     },
     '我的待办', loading ? '…' : todos !== null ? `(${todos.length})` : '',
     React.createElement('button', {
-      onClick: startNewsSession,
-      disabled: newsLoading,
-      title: '获取 Google 最新新闻并总结（新会话）',
-      style: {
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        fontSize: '14px', lineHeight: '1', padding: '2px 4px',
-        color: newsLoading ? '#a0aec0' : '#0e93ab',
-      },
-    }, newsLoading ? '…' : '📰'),
-    React.createElement('button', {
       onClick: loadTodos,
       title: '刷新待办',
       style: {
@@ -301,28 +291,7 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
           style: { padding: '12px 10px', fontSize: '12px', color: '#6a7c99', textAlign: 'center' },
         }, '没有待办事项 🎉')]
       : []),
-    ...(todos !== null ? todoList : []),
-    // 新闻会话提示条：宿主已创建新会话，Agent 正在获取新闻并总结。
-    ...(newsError !== null
-      ? [React.createElement('div', {
-          key: 'news-error',
-          style: {
-            background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
-            borderRadius: '8px', margin: '8px', padding: '6px 10px', fontSize: '12px',
-            color: '#d64540',
-          },
-        }, `Google 新闻：${newsError}`)]
-      : []),
-    ...(newsSession !== null
-      ? [React.createElement('div', {
-          key: 'news-session',
-          style: {
-            background: 'rgba(22,130,93,0.08)', border: '1px solid rgba(22,130,93,0.35)',
-            borderRadius: '8px', margin: '8px', padding: '6px 10px', fontSize: '12px',
-            color: '#16825d',
-          },
-        }, `✅ 已创建会话 ${newsSession}，在会话列表查看 Agent 总结`)]
-      : [])),
+    ...(todos !== null ? todoList : [])),
     // LLM 分析面板（点击待办项后出现）
     ...(analysisLoading
       ? [React.createElement('div', {
@@ -400,13 +369,46 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         fontSize: '12px', color: index === 0 ? '#4f7cff' : '#6a7c99', maxWidth: '260px',
       },
     }, text)),
+    // 独立的 Google 新闻入口：按钮 + 状态提示条（不依附待办卡片）。
+    ...(newsError !== null
+      ? [React.createElement('div', {
+          key: 'news-error',
+          style: {
+            background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
+            borderRadius: '8px', padding: '6px 10px', fontSize: '12px', maxWidth: '300px',
+            color: '#d64540',
+          },
+        }, `Google 新闻：${newsError}`)]
+      : []),
+    ...(newsSession !== null
+      ? [React.createElement('div', {
+          key: 'news-session',
+          style: {
+            background: 'rgba(22,130,93,0.08)', border: '1px solid rgba(22,130,93,0.35)',
+            borderRadius: '8px', padding: '6px 10px', fontSize: '12px', maxWidth: '300px',
+            color: '#16825d',
+          },
+        }, `✅ 已创建会话 ${newsSession}，在会话列表查看 Agent 总结`)]
+      : []),
+    React.createElement('div', {
+      style: { display: 'flex', gap: '8px', alignItems: 'center' },
+    },
+    React.createElement('button', {
+      onClick: startNewsSession,
+      disabled: newsLoading,
+      title: '获取 Google 最新新闻并总结（新会话）',
+      style: {
+        border: 'none', borderRadius: '999px', padding: '8px 14px', fontSize: '13px',
+        color: '#fff', background: newsLoading ? '#0e7a8c' : '#0e93ab', cursor: 'pointer',
+      },
+    }, newsLoading ? '获取中…' : '📰 获取新闻'),
     React.createElement('button', {
       onClick,
       style: {
         border: 'none', borderRadius: '999px', padding: '8px 14px', fontSize: '13px',
         color: '#fff', background: '#4f7cff', cursor: 'pointer',
       },
-    }, reply === null ? `hello world x${count}` : reply),
+    }, reply === null ? `hello world x${count}` : reply)),
   )
 }
 
