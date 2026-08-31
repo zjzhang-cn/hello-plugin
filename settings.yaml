@@ -1,0 +1,4 @@
+jira:
+  baseUrl: <url>
+  email: <email>
+  apiToken: <apiToken>

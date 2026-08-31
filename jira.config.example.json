@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://your-jira.example",
+  "email": "you@example.com",
+  "apiToken": "your-api-token"
+}

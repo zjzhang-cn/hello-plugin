@@ -16,6 +16,7 @@ tsconfig.client.json     客户端 TypeScript 编译配置
 tsdown.config.ts         双半区 bundle 配置（host: node ESM；client: ModuleLoader 工厂）
 cordis.patch.yml         bundle patch 层：把宿主插件行插入启动图（正式：包名引用）
 dev.patch.yml            开发用 patch（绝对路径，已 gitignore）
+jira.config.example.json Jira 配置模板（含占位符，可提交）；真实凭据放 jira.config.json（已 gitignore）
 package.json             包清单：exports 两个半区 + dsh 集成字段
 docs/
   dev-log.md                        开发日志（每次功能/修复必记，最新在上）
@@ -66,7 +67,7 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
 
 ### 外部数据：Jira Issue Type 读取
 
-- **配置**：`ctx.settings` 注册 `jira` namespace（`baseUrl` / `email` / `apiToken`），由 base profile 的 settings-file 提供（`$DSH_HOME/settings.yaml`）。settings 服务非必需 —— 拿不到时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`。
+- **配置优先级**：**工程根 `jira.config.json` 优先**（host 启动时从 bundle 目录向上逐级查找，开发时用，已 gitignore），其次 `ctx.settings` 注册的 `jira` namespace（`baseUrl` / `email` / `apiToken`，由 base profile 的 settings-file 提供，`$DSH_HOME/settings.yaml`）。两处都未配置时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`。
 - **端点**：`/hello/jira/issue-types`。调用 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth），把每个 Issue Type 映射为 `{ id, name, color, iconUrl }`（颜色按名称匹配常见 Jira 类型，否则从色板确定性取值；相对图标路径拼 baseUrl）。
 - **客户端**：点击 `HelloPill` 时同时拉取，类别条渲染在按钮上方（每项：图标或代表色圆点 + 名称）；失败显示 `jira-error` 提示条。
 

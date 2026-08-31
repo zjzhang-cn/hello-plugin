@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { HostConnectionHandle, ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
@@ -120,27 +123,66 @@ function rpcFailure(code: string, message: string): ConnectionRpcResult<unknown>
   return { ok: false, error: { code, message, details: {} } }
 }
 
+/**
+ * 从工程根查找 jira.config.json（优先级高于 ctx.settings）。
+ *
+ * bundle 位于 <工程根>/lib/host.js；从 bundle 所在目录逐级向上找 jira.config.json，
+ * 命中第一个即返回。开发时把真实 Jira 凭据放工程根的 jira.config.json（已 gitignore），
+ * 正式部署不提供该文件时回退到 settings.yaml。
+ */
+function loadProjectJiraConfig(logger: { info: (message: string, ...args: unknown[]) => void; warn: (message: string, ...args: unknown[]) => void }): JiraSettings | null {
+  const bundleDir = dirname(fileURLToPath(import.meta.url))
+  let dir: string | undefined = bundleDir
+  while (dir !== undefined && dir !== '/') {
+    const candidate = join(dir, 'jira.config.json')
+    try {
+      const raw = readFileSync(candidate, 'utf8')
+      const parsed = JSON.parse(raw) as Partial<JiraSettings>
+      const settings: JiraSettings = {
+        baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : undefined,
+        email: typeof parsed.email === 'string' ? parsed.email : undefined,
+        apiToken: typeof parsed.apiToken === 'string' ? parsed.apiToken : undefined,
+      }
+      logger.info('jira config loaded from %s', candidate)
+      return settings
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+        // 本目录没有，向上一级继续
+        dir = dirname(dir)
+        continue
+      }
+      // 存在但读/解析失败：记录下来，继续向上找（或最终回退 settings）
+      logger.warn('jira.config.json parse failed at %s: %s', candidate, String(error))
+      dir = dirname(dir)
+    }
+  }
+  return null
+}
+
 export function apply(ctx: Context): void {
   const logger = ctx.logger('hello-plugin')
   logger.info('host loaded')
   console.log('hello-plugin/host.js loaded')
 
-  // ---- settings：注册 jira namespace（baseUrl / email / apiToken）----
-  // settings 服务来自 base profile（settings-file），非必需：拿不到时 Jira 端点
-  // 返回「未配置」错误，插件其余功能（ping / 事件推送）不受影响。
+  // ---- Jira 配置：工程根 jira.config.json 优先，其次 ctx.settings ----
+  // 工程文件只在本仓库开发时存在（已 gitignore）；settings 服务来自 base profile
+  // （settings-file），二者都没有时 Jira 端点返回「未配置」错误，插件其余功能
+  // （ping / 事件推送）不受影响。
+  const projectConfig = loadProjectJiraConfig(logger)
   const settingsService = ctx.get('settings')
-  let jiraSettings: JiraSettings = {}
+  let settingsJira: JiraSettings = {}
   if (settingsService !== undefined) {
     const scope = settingsService.register('jira', z.object({
       baseUrl: z.string().required(false),
       email: z.string().required(false),
       apiToken: z.string().required(false),
     }))
-    jiraSettings = scope.get()
-    scope.watch(() => { jiraSettings = scope.get() })
-  } else {
-    logger.warn('settings 服务不可用，jira/issue-types 端点将返回未配置')
+    settingsJira = scope.get()
+    scope.watch(() => { settingsJira = scope.get() })
+  } else if (projectConfig === null) {
+    logger.warn('settings 服务不可用且无 jira.config.json，jira/issue-types 端点将返回未配置')
   }
+  const resolveJiraSettings = (): JiraSettings => projectConfig ?? settingsJira
 
   // ---- 宿主 → 客户端 的事件队列（长轮询）----
   // 队列持有已 emit 但尚未被客户端取走的事件；waiters 记录当前挂起的长轮询请求。
@@ -175,7 +217,7 @@ export function apply(ctx: Context): void {
 
     if (endpoint === 'jira/issue-types') {
       try {
-        const types = await fetchJiraIssueTypes(jiraSettings)
+        const types = await fetchJiraIssueTypes(resolveJiraSettings())
         return { ok: true, value: types }
       } catch (error) {
         if (error instanceof JiraConfigError) {

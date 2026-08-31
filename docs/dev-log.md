@@ -2,6 +2,17 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — Jira 配置支持放工程内（jira.config.json 优先）
+
+**类型**：功能
+**涉及**：`src/host/index.ts`、`jira.config.json`（新增，gitignore）、`jira.config.example.json`（新增）、`.gitignore`、`README.md`、`CLAUDE.md`、`docs/dev-log.md`
+**背景 / 问题**：Jira 凭据此前只能放全局 `$DSH_HOME/settings.yaml`，开发时改全局配置不方便；希望配置能随工程走。
+**改动**：
+- host 新增 `loadProjectJiraConfig()`：从 bundle 所在目录（`lib/`）逐级向上找 `jira.config.json`，命中即读取（`baseUrl`/`email`/`apiToken`）。
+- 优先级：**工程 `jira.config.json` > `ctx.settings`**；端点改用 `resolveJiraSettings()` 动态解析。
+- 工程根放 `jira.config.example.json`（占位符，可提交）；真实凭据 `jira.config.json` 加入 `.gitignore`。
+**验证**：`pnpm build` 通过；冒烟测试 —— 工程根有配置文件时加载成功且返回真实 Jira 数据（无 settings 服务也工作）；无配置文件时回退 settings，未配置返回 `jira-not-configured`。
+
 ## 2026-08-31 — 宿主半区迁移为 TypeScript 并新增读取 Jira Issue Type
 
 **类型**：功能 + 重构

@@ -37,16 +37,25 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 ## Jira Issue Type 类别条
 
-宿主半区通过 `ctx.settings` 注册 `jira` namespace，读取 Jira 连接配置并调用 Jira REST API，客户端点击按钮时拉取并渲染为彩色类别徽章条：
+宿主半区通过以下顺序解析 Jira 连接配置（**工程内 `jira.config.json` 优先，其次 `ctx.settings`**），再调用 Jira REST API，客户端点击按钮时拉取并渲染为彩色类别徽章条：
 
-- **配置**（`$DSH_HOME/settings.yaml`，由 base profile 的 settings-file 提供）：
+- **工程配置文件**（开发时用，已 gitignore 不提交凭据）：工程根放 `jira.config.json`，host 启动时从 bundle 所在目录向上逐级查找：
+  ```json
+  {
+    "baseUrl": "https://your-jira.example",
+    "email": "you@example.com",
+    "apiToken": "<Jira API Token>"
+  }
+  ```
+  可复制 `jira.config.example.json`（已提交，含占位符）为 `jira.config.json` 填入真实值。
+- **settings 配置**（正式部署用，由 base profile 的 settings-file 提供，`$DSH_HOME/settings.yaml`）：
   ```yaml
   jira:
     baseUrl: https://your-jira.example
     email: you@example.com
     apiToken: <Jira API Token>
   ```
-  未配置时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`，客户端显示 `Jira: jira-not-configured` 提示条。
+  两处都未配置时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`，客户端显示 `Jira: jira-not-configured` 提示条。
 - **宿主端点**：`/hello/jira/issue-types` 调用 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth，10 秒超时），把每个 Issue Type 映射为 `{ id, name, color, iconUrl }` —— 颜色按名称匹配常见 Jira 类型（Bug/Task/Story/Epic…），其余从色板确定性取值；相对图标路径自动拼接 baseUrl。
 - **客户端**：点击 `HelloPill` 时同时调用该端点，类别条渲染在按钮上方（每项为图标或代表色圆点 + 名称）；调用失败显示红色错误条。
 
@@ -75,6 +84,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 Jira 配置支持放工程内（jira.config.json 优先）** — host 从工程根读取 `jira.config.json`（gitignore，含示例模板 `jira.config.example.json`），优先于全局 settings.yaml；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 宿主半区迁移为 TypeScript + 读取 Jira Issue Type** — `host.js` 迁为 `src/host/index.ts`（构建为 `lib/host.js` Node ESM 单文件），并通过 `ctx.settings` 注册 `jira` namespace、新增 `/hello/jira/issue-types` 端点；客户端点击按钮时渲染 Jira 类别条；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 支持本机 Chrome 调试远端客户端 TSX** — bundle source map 直接映射到 TSX，并记录 Remote-SSH 下通过端口转发使用本机 DevTools 的流程；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 增加 DeepSeek Harness Web 调试启动项** — 新增 VS Code 配置，在 `deepseek-harness` 中以 `dev.patch.yml` 运行 `pnpm dsh web`；详见 [开发日志](docs/dev-log.md)。
@@ -103,7 +113,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 2. 启动一个挂载了本 bundle 的 dsh profile（`dev.patch.yml` 指向 `lib/host.js`），宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端应能看到右下角的「👋 hello world」悬浮按钮。
 3. 点击悬浮按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，随后恢复计数 —— 表示客户端 → 宿主的 RPC 链路打通。
 4. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路打通。
-5. 在 `$DSH_HOME/settings.yaml` 配置 `jira:` 后点击按钮，按钮上方出现 Jira Issue Type 类别条（每项为图标或代表色圆点 + 名称）；未配置时出现 `Jira: jira-not-configured` 提示条。
+5. 配置 Jira 凭据（任选其一，工程文件优先）后点击按钮，按钮上方出现 Jira Issue Type 类别条（每项为图标或代表色圆点 + 名称）；未配置时出现 `Jira: jira-not-configured` 提示条。开发时在工程根放 `jira.config.json`（见 `jira.config.example.json`）即可，无需改全局 settings.yaml。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 
