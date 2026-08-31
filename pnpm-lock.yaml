@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../deepseek-harness/packages/llm/llm
+        version: link:../deepseek-harness/packages/llm/llm
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: link:../deepseek-harness/vendor/cordis

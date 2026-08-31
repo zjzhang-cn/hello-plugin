@@ -18,6 +18,13 @@ interface JiraTodo {
   statusName: string
 }
 
+/** host 分析一个 issue 后返回的内容。 */
+interface JiraAnalysis {
+  key: string
+  summary: string
+  analysis: string
+}
+
 interface HelloPillProps {
   connection: ConnectionHandle
 }
@@ -31,6 +38,11 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [events, setEvents] = React.useState<string[]>([])
   const replyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const clickSeqRef = React.useRef(0)
+  const [analysis, setAnalysis] = React.useState<JiraAnalysis | null>(null)
+  const [analysisLoading, setAnalysisLoading] = React.useState(false)
+  const [analysisError, setAnalysisError] = React.useState<string | null>(null)
+  const [commentState, setCommentState] = React.useState<'idle' | 'submitting' | 'added' | 'error'>('idle')
+  const [commentError, setCommentError] = React.useState<string | null>(null)
 
   const loadTodos = (): void => {
     if (loading) return
@@ -47,6 +59,50 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
       })
       .catch((error: unknown) => setTodosError(String(error)))
       .finally(() => setLoading(false))
+  }
+
+  // 点击待办项：调 host 让 LLM 分析该 issue，展示回答。
+  const analyzeTodo = (todo: JiraTodo): void => {
+    if (analysisLoading) return
+    setAnalysisLoading(true)
+    setAnalysisError(null)
+    setAnalysis(null)
+    setCommentState('idle')
+    setCommentError(null)
+    void connection.rpc
+      .call('/hello', 'jira/analyze', { args: { key: todo.key } })
+      .then((result) => {
+        if (result.ok) setAnalysis(result.value as JiraAnalysis)
+        else setAnalysisError(`${result.error.code}: ${result.error.message}`)
+      })
+      .catch((error: unknown) => setAnalysisError(String(error)))
+      .finally(() => setAnalysisLoading(false))
+  }
+
+  // 用户同意：把分析文本写入 Jira 评论。
+  const addComment = (): void => {
+    if (analysis === null || commentState === 'submitting') return
+    setCommentState('submitting')
+    setCommentError(null)
+    void connection.rpc
+      .call('/hello', 'jira/comment', { args: { key: analysis.key, text: analysis.analysis } })
+      .then((result) => {
+        if (result.ok) setCommentState('added')
+        else {
+          setCommentState('error')
+          setCommentError(`${result.error.code}: ${result.error.message}`)
+        }
+      })
+      .catch((error: unknown) => {
+        setCommentState('error')
+        setCommentError(String(error))
+      })
+  }
+
+  const cancelAnalysis = (): void => {
+    setAnalysis(null)
+    setCommentState('idle')
+    setCommentError(null)
   }
 
   // 挂载后立即加载一次待办列表；点击按钮时也刷新。
@@ -120,14 +176,17 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
     loadTodos()
   }
 
-  // 待办列表主体：每项 = 类型徽章 + key + summary + 状态。
+  // 待办列表主体：每项 = 类型徽章 + key + summary + 状态；点击触发 LLM 分析。
   const todoList = todos === null
     ? []
     : todos.map((todo) => React.createElement('div', {
         key: todo.key,
+        onClick: () => analyzeTodo(todo),
+        title: '点击让 LLM 分析此 issue',
         style: {
           display: 'flex', alignItems: 'center', gap: '8px',
           padding: '6px 8px', borderBottom: '1px solid rgba(0,0,0,0.06)',
+          cursor: 'pointer',
         },
       },
       React.createElement('span', {
@@ -213,6 +272,75 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         }, '没有待办事项 🎉')]
       : []),
     ...(todos !== null ? todoList : [])),
+    // LLM 分析面板（点击待办项后出现）
+    ...(analysisLoading
+      ? [React.createElement('div', {
+          key: 'analysis-loading',
+          style: {
+            background: 'rgba(255,255,255,0.96)', border: '1px solid rgba(0,0,0,0.12)',
+            borderRadius: '10px', width: '300px', padding: '10px 12px', fontSize: '12px',
+            color: '#6a7c99',
+          },
+        }, 'LLM 正在分析…')]
+      : []),
+    ...(analysisError !== null
+      ? [React.createElement('div', {
+          key: 'analysis-error',
+          style: {
+            background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
+            borderRadius: '10px', width: '300px', padding: '10px 12px', fontSize: '12px',
+            color: '#d64540',
+          },
+        }, `分析失败：${analysisError}`)]
+      : []),
+    ...(analysis !== null
+      ? [React.createElement('div', {
+          key: 'analysis-panel',
+          style: {
+            background: 'rgba(255,255,255,0.96)', border: '1px solid rgba(79,124,255,0.4)',
+            borderRadius: '10px', width: '300px', padding: '10px 12px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          },
+        },
+        React.createElement('div', {
+          style: { fontSize: '12px', fontWeight: 600, color: '#1e293b', marginBottom: '4px' },
+        }, `${analysis.key} · ${analysis.summary}`),
+        React.createElement('div', {
+          style: {
+            fontSize: '12px', color: '#334155', maxHeight: '180px', overflowY: 'auto',
+            whiteSpace: 'pre-wrap', marginBottom: '8px',
+          },
+        }, analysis.analysis),
+        commentState === 'added'
+          ? React.createElement('div', {
+              style: { fontSize: '12px', color: '#16825d' },
+            }, '✅ 已添加到 Jira 评论')
+          : React.createElement('div', {
+              style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' },
+            },
+          React.createElement('button', {
+            onClick: cancelAnalysis,
+            disabled: commentState === 'submitting',
+            style: {
+              border: '1px solid rgba(0,0,0,0.15)', borderRadius: '6px', padding: '4px 10px',
+              fontSize: '12px', background: 'transparent', color: '#475569', cursor: 'pointer',
+            },
+          }, '取消'),
+          React.createElement('button', {
+            onClick: addComment,
+            disabled: commentState === 'submitting',
+            style: {
+              border: 'none', borderRadius: '6px', padding: '4px 10px',
+              fontSize: '12px', color: '#fff', background: '#4f7cff', cursor: 'pointer',
+            },
+          }, commentState === 'submitting' ? '添加中…' : '添加到评论')),
+        ...(commentState === 'error'
+          ? [React.createElement('div', {
+              key: 'comment-error',
+              style: { fontSize: '12px', color: '#d64540', marginTop: '6px' },
+            }, `评论失败：${commentError}`)]
+          : []))]
+      : []),
     ...events.map((text, index) => React.createElement('div', {
       key: text + index,
       style: {

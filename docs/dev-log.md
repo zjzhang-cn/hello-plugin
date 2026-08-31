@@ -2,6 +2,18 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — LLM 分析与评论（点击待办 → 分析 → 确认写回 Jira）
+
+**类型**：功能
+**涉及**：`src/host/index.ts`、`src/client/index.tsx`、`tsdown.config.ts`、`package.json`、`.gitignore`、`llm.config.json`（新增，gitignore）、`llm.config.example.json`（新增）、`README.md`、`CLAUDE.md`、`docs/dev-log.md`
+**背景 / 问题**：点击待办事项后，希望把内容提交 LLM 分析，LLM 正式回答后询问是否添加到工作项评论，同意则写入 Jira。
+**改动**：
+- **宿主**：新增 `/hello/jira/analyze`（args `{ key }`）—— 取 issue 详情（summary + description + 已有评论，**ADF 递归转纯文本**）→ 调 `ctx.llm.stream`（`BlockAssembler` 聚合 `text-delta`，`finish.kind` 为 error/aborted 视为失败）→ 返回 `{ key, summary, analysis }`；`ctx.get('llm')` 可选获取，缺失返回明确错误。新增 `/hello/jira/comment`（args `{ key, text }`）—— `POST /rest/api/3/issue/{key}/comment`，body 用 **ADF 格式**（`{ type: 'doc', ... }`）。
+- **LLM 配置**：工程根 `llm.config.json`（provider / model，已 gitignore）+ 可提交模板 `llm.config.example.json`；host 从 bundle 目录向上逐级查找（复用 `loadProjectJsonConfig` 通用化）。
+- **构建**：`@deepseek-ai/dsh-llm` 改为 **external**（其 attribution 模块用 `createRequire(import.meta.url)("../package.json")` 读自身版本，内联会导致相对路径错位），并移入 `dependencies`（运行时依赖）；host bundle 回到 ~43KB。
+- **客户端**：待办项可点击（cursor + title 提示）→ 分析中面板 → 分析结果面板（issue 标题 + 分析文本 + 「添加到评论 / 取消」按钮）→ 同意调 comment，显示「✅ 已添加到 Jira 评论」；submitting 禁用按钮，error 显示错误。
+**验证**：`pnpm build` 通过、双半区类型检查通过；冒烟测试（真实 Jira 读详情 + mock LLM + mock 评论写入）—— analyze 返回 `{ key, summary, analysis }`、comment POST 到 `/rest/api/3/issue/{key}/comment`（ADF body）全部通过；`node --check` 通过。
+
 ## 2026-08-31 — 客户端交互优化（气泡只留最新、待办刷新按钮、ping 1 秒恢复）
 
 **类型**：功能

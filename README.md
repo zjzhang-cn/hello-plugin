@@ -6,9 +6,9 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道（ping + 读取 Jira 待办列表 + 事件长轮询） |
-| `src/client/index.tsx` | 客户端 TypeScript 源码：注册右下角悬浮组件 `HelloPill` 并注入 `shell.overlay` 插槽；展示「我的待办」Jira 列表（类型徽章内嵌）+ 长轮询接收宿主事件气泡；点击按钮刷新待办并 ping 宿主 |
-| `lib/host.js` | 由 `pnpm build` 生成的宿主半区 bundle（Node ESM 单文件，无运行时裸 import） |
+| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道（ping + 读取 Jira 待办列表 + LLM 分析/评论 + 事件长轮询） |
+| `src/client/index.tsx` | 客户端 TypeScript 源码：注册右下角悬浮组件 `HelloPill` 并注入 `shell.overlay` 插槽；展示「我的待办」Jira 列表（类型徽章内嵌，点击触发 LLM 分析）+ 长轮询接收宿主事件气泡；点击按钮刷新待办并 ping 宿主 |
+| `lib/host.js` | 由 `pnpm build` 生成的宿主半区 bundle（Node ESM 单文件，schemastery 内联、dsh-llm external） |
 | `lib/client.js` | 由 `pnpm build` 生成的客户端浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
 | `.vscode/launch.json` | VS Code 调试配置：在 deepseek-harness 中以本地 `dev.patch.yml` 启动 dsh Web |
@@ -20,7 +20,7 @@
 
 dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理，插件加载模型详见 deepseek-harness 中的 `2026-07-23-client-plugin-loading-model.md`。
 
-- **宿主半区**：`exports["."]` → `lib/host.js`。它作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。源码 `src/host/index.ts` 经 `pnpm build` 编译为单文件 Node ESM（schemastery 内联，其余依赖均为 type-only 被擦除）。
+- **宿主半区**：`exports["."]` → `lib/host.js`。它作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。源码 `src/host/index.ts` 经 `pnpm build` 编译为单文件 Node ESM（schemastery 内联；`@deepseek-ai/dsh-llm` external，运行时从 node_modules 解析——它的内部用 `createRequire` 读自身 package.json，内联会路径错位）。
 - **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`dsh-client-modules` 扫描该声明（读取 entry 最近处的 package.json，要求 `dsh.client.platform=web` 且存在 `exports["./client"]`）把插件纳入启动图；浏览器端 bundle 通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂。注册是**惰性**的：脚本到达只登记 factory，首次 `require` 时才真正执行模块体。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。profile 合成器按 `dsh.profile.bundles` 顺序把每个 bundle 的 patch 应用到启动图（空 entry 列表之上），再叠加 profile 自身 patch 与启动器层。
 
@@ -59,6 +59,22 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 - **宿主端点**：`/hello/jira/todos` 调用 `GET {baseUrl}/rest/api/3/search/jql`（Basic Auth，10 秒超时），JQL 为 `assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC`，每项映射为 `{ key, summary, typeName, typeColor, typeIconUrl, statusName }` —— 类型颜色按名称匹配常见中英文 Jira 类型，其余从色板确定性取值；相对图标路径自动拼接 baseUrl。
 - **客户端**：挂载后自动加载待办，展示为悬浮卡片「我的待办」列表；头部右侧有刷新按钮（⟳），点击刷新列表；每项为类型徽章（图标或代表色圆点 + 类型名）+ 摘要 + `KEY · 状态`；点击底部 hello 按钮 ping 宿主并刷新待办；调用失败显示红色错误条。
 
+## LLM 分析与评论
+
+点击某个待办项，可以让 LLM 分析该 issue 的内容，并选择是否把分析结论作为评论写回 Jira：
+
+- **LLM 配置**（工程根 `llm.config.json`，已 gitignore，模板见 `llm.config.example.json`）：
+  ```json
+  {
+    "provider": "deepseek-official",
+    "model": "deepseek-chat"
+  }
+  ```
+  未配置时 `jira/analyze` 端点返回错误提示。
+- **分析端点**：`/hello/jira/analyze`（`{ args: { key } }`）。host 先读 issue 详情（summary + description + 已有评论，ADF 转纯文本），再调 `ctx.llm.stream`（`BlockAssembler` 聚合输出）生成分析文本，返回 `{ key, summary, analysis }`。LLM 服务用 `ctx.get('llm')` 可选获取，宿主未挂载 llm 时返回明确错误。
+- **评论端点**：`/hello/jira/comment`（`{ args: { key, text } }`）。`POST {baseUrl}/rest/api/3/issue/{key}/comment`，body 用 ADF 格式。
+- **客户端交互**：点击待办项 → 出现「LLM 正在分析…」面板 → 展示分析文本 + 「添加到评论 / 取消」按钮 → 同意则写回 Jira 并显示「✅ 已添加到 Jira 评论」。
+
 ## 宿主主动推送到客户端（长轮询）
 
 `dsh` 的标准「宿主 → 客户端」事件推送走 api-gateway 的 Remote events 转发（`ctx.emit` → 网关广播 → 客户端 `ctx.remote.$on`）。但它依赖应用级 `api-remotes` 的 allowlist，且 `typertGateway.registerRemoteEvents` 是**单例**（已被 `api-remotes` 占用）—— 第三方插件的自定义事件名无法进 allowlist。
@@ -84,6 +100,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 LLM 分析与评论** — 点击待办项 → host 取 issue 详情（ADF 转文本）→ `ctx.llm.stream` 生成分析 → 客户端卡片内确认 → 同意则 ADF 格式写回 Jira 评论；LLM 配置走工程根 `llm.config.json`（provider/model，可配置），dsh-llm 改为 external 运行时依赖；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端交互优化** — 长轮询气泡只保留最新一条；「我的待办」头部新增 ⟳ 刷新按钮；hello 按钮 ping 后 1 秒恢复 `hello world x{n}` 并计数 +1；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 恢复长轮询与 ping（学习项目只增不删）** — 上轮待办改动误删长轮询，已完整恢复（`events/poll` + 每 5 秒 `hello/notice` 推送 + 客户端气泡条），与待办列表、ping 共存；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 Jira 待办列表（替代类别条）** — host 改用 `/rest/api/3/search/jql` 查询指派给我的未解决 issue，新增 `/hello/jira/todos` 端点；客户端展示「我的待办」列表（类型徽章内嵌）替代类别条；详见 [开发日志](docs/dev-log.md)。
@@ -117,6 +134,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 3. 点击底部 hello 按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，**1 秒后恢复 `hello world x{n}`（计数 +1）** —— 表示客户端 → 宿主的 RPC 链路打通。
 4. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路（长轮询）打通。
 5. 配置 Jira 凭据（任选其一，工程文件优先）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时显示 `Jira: jira-not-configured` 提示条。开发时在工程根放 `jira.config.json`（见 `jira.config.example.json`）即可，无需改全局 settings.yaml。
+6. 在工程根放 `llm.config.json`（见 `llm.config.example.json`）配置 provider/model 后，点击某个待办项：出现「LLM 正在分析…」→ 展示分析面板 → 点「添加到评论」写回 Jira 并显示「✅ 已添加到 Jira 评论」；未配置 LLM 时显示分析失败提示。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 

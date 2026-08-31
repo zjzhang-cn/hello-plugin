@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
+import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import z from '@deepseek-ai/schemastery'
 
 // ---- 类型定义 ----
@@ -18,6 +19,11 @@ interface JiraSettings {
   apiToken?: string | undefined
 }
 
+interface LlmConfig {
+  provider?: string | undefined
+  model?: string | undefined
+}
+
 /** 一条 Jira 待办（指派给当前用户的未解决问题）。 */
 interface JiraTodo {
   key: string
@@ -26,6 +32,14 @@ interface JiraTodo {
   typeColor: string
   typeIconUrl: string
   statusName: string
+}
+
+/** Jira issue 详情（供 LLM 分析用）。 */
+interface JiraIssueDetail {
+  key: string
+  summary: string
+  descriptionText: string
+  commentsText: string
 }
 
 // ---- 常量 ----
@@ -83,36 +97,54 @@ function resolveIconUrl(baseUrl: string, iconUrl: string | undefined): string {
   return baseUrl.replace(/\/+$/, '') + (iconUrl.startsWith('/') ? iconUrl : '/' + iconUrl)
 }
 
-/**
- * 调用 Jira REST API 读取指派给当前用户的未解决 issue（待办）。
- * 接口：GET {baseUrl}/rest/api/3/search/jql，
- * JQL：assignee = currentUser() AND resolution = Unresolved。
- *
- * 注意：Cloud 实例已移除 /rest/api/2/search（410），须用 /rest/api/3/search/jql。
- */
-async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
-  const baseUrl = settings.baseUrl?.trim()
-  const email = settings.email?.trim()
-  const apiToken = settings.apiToken?.trim()
-  if (baseUrl === '' || baseUrl === undefined) throw new JiraConfigError('jira.baseUrl 未配置')
-  if (email === '' || email === undefined) throw new JiraConfigError('jira.email 未配置')
-  if (apiToken === '' || apiToken === undefined) throw new JiraConfigError('jira.apiToken 未配置')
+// ---- Jira API 工具 ----
 
+function jiraHeaders(settings: JiraSettings): Record<string, string> {
+  return {
+    Accept: 'application/json',
+    Authorization: 'Basic ' + Buffer.from(`${settings.email}:${settings.apiToken}`).toString('base64'),
+  }
+}
+
+function assertJiraSettings(settings: JiraSettings): void {
+  if (settings.baseUrl === undefined || settings.baseUrl.trim() === '') throw new JiraConfigError('jira.baseUrl 未配置')
+  if (settings.email === undefined || settings.email.trim() === '') throw new JiraConfigError('jira.email 未配置')
+  if (settings.apiToken === undefined || settings.apiToken.trim() === '') throw new JiraConfigError('jira.apiToken 未配置')
+}
+
+function jiraBaseUrl(settings: JiraSettings): string {
+  return (settings.baseUrl as string).replace(/\/+$/, '')
+}
+
+/**
+ * 把 Jira 的 ADF（Atlassian Document Format）节点递归转成纯文本。
+ * ADF 形如 { type: 'paragraph', content: [{ type: 'text', text: '...' }] }。
+ */
+function adfToText(node: unknown): string {
+  if (node === null || node === undefined) return ''
+  if (typeof node === 'string') return node
+  if (Array.isArray(node)) return node.map((item) => adfToText(item)).join('\n')
+  if (typeof node === 'object') {
+    const record = node as Record<string, unknown>
+    if (record.type === 'text' && typeof record.text === 'string') return record.text
+    if (record.type === 'hardBreak') return '\n'
+    // 其它节点：递归 content 与 marks 之外的字段
+    if (Array.isArray(record.content)) return adfToText(record.content)
+    return ''
+  }
+  return ''
+}
+
+/** 调用 Jira REST API 读取指派给当前用户的未解决 issue（待办）。 */
+async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
   const jql = 'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC'
-  const url = baseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql'
+  const url = baseUrl + '/rest/api/3/search/jql'
     + '?jql=' + encodeURIComponent(jql)
     + '&fields=key,summary,issuetype,status&maxResults=50'
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: 'Basic ' + Buffer.from(`${email}:${apiToken}`).toString('base64'),
-    },
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
-  }
+  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw await jiraApiError(response)
   const body = await response.json() as {
     issues?: Array<{
       key?: unknown
@@ -125,7 +157,6 @@ async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
   }
   const issues = body.issues
   if (!Array.isArray(issues)) throw new Error('Jira API 返回结构异常（期望 issues 数组）')
-
   return issues.filter((issue) => typeof issue.key === 'string').map((issue) => {
     const fields = issue.fields ?? {}
     const typeName = typeof fields.issuetype?.name === 'string' ? fields.issuetype.name : 'Issue'
@@ -134,14 +165,178 @@ async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
       summary: typeof fields.summary === 'string' ? fields.summary : '',
       typeName,
       typeColor: colorForIssueType(typeName),
-      typeIconUrl: resolveIconUrl(
-        baseUrl,
-        typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined,
-      ),
+      typeIconUrl: resolveIconUrl(baseUrl, typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined),
       statusName: typeof fields.status?.name === 'string' ? fields.status.name : '',
     }
   })
 }
+
+/** 读取单个 issue 详情（summary + description + comments），供 LLM 分析。 */
+async function fetchJiraIssueDetail(settings: JiraSettings, key: string): Promise<JiraIssueDetail> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,comment`
+  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw await jiraApiError(response)
+  const body = await response.json() as {
+    key?: unknown
+    fields?: {
+      summary?: unknown
+      description?: unknown
+      comment?: { comments?: Array<{ body?: unknown; author?: { displayName?: unknown } }> }
+    }
+  }
+  const fields = body.fields ?? {}
+  const comments = fields.comment?.comments
+  const commentsText = (Array.isArray(comments) ? comments : [])
+    .map((comment) => {
+      const author = typeof comment.author?.displayName === 'string' ? comment.author.displayName : 'unknown'
+      const text = adfToText(comment.body).trim()
+      return text === '' ? '' : `${author}: ${text}`
+    })
+    .filter((text) => text !== '')
+    .join('\n')
+  return {
+    key: typeof body.key === 'string' ? body.key : key,
+    summary: typeof fields.summary === 'string' ? fields.summary : '',
+    descriptionText: adfToText(fields.description).trim(),
+    commentsText,
+  }
+}
+
+/** 往指定 issue 添加一条评论（ADF 格式 body）。 */
+async function addJiraComment(settings: JiraSettings, key: string, text: string): Promise<void> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/comment`
+  const body = {
+    body: {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text }],
+        },
+      ],
+    },
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw await jiraApiError(response)
+}
+
+async function jiraApiError(response: Response): Promise<Error> {
+  const detail = await response.text().catch(() => '')
+  return new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
+}
+
+// ---- 工程配置文件加载 ----
+
+interface ConfigLoaderLogger {
+  info: (message: string, ...args: unknown[]) => void
+  warn: (message: string, ...args: unknown[]) => void
+}
+
+/** 从 bundle 所在目录逐级向上查找一个 JSON 配置文件。 */
+function loadProjectJsonConfig<T extends Record<string, unknown>>(
+  filename: string,
+  logger: ConfigLoaderLogger,
+): T | null {
+  const bundleDir = dirname(fileURLToPath(import.meta.url))
+  let dir: string | undefined = bundleDir
+  while (dir !== undefined && dir !== '/') {
+    const candidate = join(dir, filename)
+    try {
+      const raw = readFileSync(candidate, 'utf8')
+      const parsed = JSON.parse(raw) as T
+      logger.info('%s loaded from %s', filename, candidate)
+      return parsed
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+        dir = dirname(dir)
+        continue
+      }
+      logger.warn('%s parse failed at %s: %s', filename, candidate, String(error))
+      dir = dirname(dir)
+    }
+  }
+  return null
+}
+
+function loadProjectJiraConfig(logger: ConfigLoaderLogger): JiraSettings | null {
+  const parsed = loadProjectJsonConfig<Partial<JiraSettings>>('jira.config.json', logger)
+  if (parsed === null) return null
+  return {
+    baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : undefined,
+    email: typeof parsed.email === 'string' ? parsed.email : undefined,
+    apiToken: typeof parsed.apiToken === 'string' ? parsed.apiToken : undefined,
+  }
+}
+
+function loadProjectLlmConfig(logger: ConfigLoaderLogger): LlmConfig | null {
+  const parsed = loadProjectJsonConfig<Partial<LlmConfig>>('llm.config.json', logger)
+  if (parsed === null) return null
+  return {
+    provider: typeof parsed.provider === 'string' && parsed.provider !== '' ? parsed.provider : undefined,
+    model: typeof parsed.model === 'string' && parsed.model !== '' ? parsed.model : undefined,
+  }
+}
+
+// ---- LLM 调用 ----
+
+/** 用 ctx.llm 对一段内容生成分析文本。 */
+async function generateLlmAnalysis(
+  ctx: Context,
+  llmConfig: LlmConfig,
+  issue: JiraIssueDetail,
+  signal: AbortSignal,
+): Promise<string> {
+  const llm = ctx.get('llm')
+  if (llm === undefined) throw new Error('llm 服务不可用（宿主未挂载 llm）')
+  if (llmConfig.provider === undefined || llmConfig.model === undefined) {
+    throw new Error('llm.config.json 未配置 provider/model')
+  }
+  const prompt = [
+    `Jira issue ${issue.key}：${issue.summary}`,
+    ``,
+    issue.descriptionText !== '' ? `描述：\n${issue.descriptionText}` : '描述：（无）',
+    issue.commentsText !== '' ? `已有评论：\n${issue.commentsText}` : '已有评论：（无）',
+  ].join('\n')
+  const options = {
+    provider: llmConfig.provider,
+    model: llmConfig.model,
+    messages: [createUserMessage({
+      content: [{ type: 'text' as const, text: prompt }],
+      source: { kind: 'plugin' as const, plugin: name },
+    })],
+    system: '你是 Jira 问题分析助手。请用简洁的中文总结这个 issue 的要点：它要解决什么问题、当前状态、可能的下一步。只输出分析内容本身，不要客套。',
+    maxTokens: 500,
+    signal,
+  }
+  const assembler = new BlockAssembler()
+  for await (const chunk of llm.stream(options)) {
+    signal.throwIfAborted()
+    assembler.push(chunk)
+  }
+  const finish = assembler.finish
+  if (finish.kind === 'error' || finish.kind === 'aborted') {
+    throw new Error(`LLM 调用失败：${finish.failure?.message ?? String(finish.failure)}`)
+  }
+  const text = assembler.blocks()
+    .filter((block) => block.type === 'text')
+    .map((block) => block.type === 'text' ? block.text : '')
+    .join(' ')
+    .trim()
+  if (text === '') throw new Error('LLM 未返回有效内容')
+  return text
+}
+
+// ---- 错误与 RPC ----
 
 class JiraConfigError extends Error {
   readonly code = 'jira-not-configured'
@@ -151,51 +346,12 @@ function rpcFailure(code: string, message: string): ConnectionRpcResult<unknown>
   return { ok: false, error: { code, message, details: {} } }
 }
 
-/**
- * 从工程根查找 jira.config.json（优先级高于 ctx.settings）。
- *
- * bundle 位于 <工程根>/lib/host.js；从 bundle 所在目录逐级向上找 jira.config.json，
- * 命中第一个即返回。开发时把真实 Jira 凭据放工程根的 jira.config.json（已 gitignore），
- * 正式部署不提供该文件时回退到 settings.yaml。
- */
-function loadProjectJiraConfig(logger: { info: (message: string, ...args: unknown[]) => void; warn: (message: string, ...args: unknown[]) => void }): JiraSettings | null {
-  const bundleDir = dirname(fileURLToPath(import.meta.url))
-  let dir: string | undefined = bundleDir
-  while (dir !== undefined && dir !== '/') {
-    const candidate = join(dir, 'jira.config.json')
-    try {
-      const raw = readFileSync(candidate, 'utf8')
-      const parsed = JSON.parse(raw) as Partial<JiraSettings>
-      const settings: JiraSettings = {
-        baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : undefined,
-        email: typeof parsed.email === 'string' ? parsed.email : undefined,
-        apiToken: typeof parsed.apiToken === 'string' ? parsed.apiToken : undefined,
-      }
-      logger.info('jira config loaded from %s', candidate)
-      return settings
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
-        // 本目录没有，向上一级继续
-        dir = dirname(dir)
-        continue
-      }
-      // 存在但读/解析失败：记录下来，继续向上找（或最终回退 settings）
-      logger.warn('jira.config.json parse failed at %s: %s', candidate, String(error))
-      dir = dirname(dir)
-    }
-  }
-  return null
-}
-
 export function apply(ctx: Context): void {
   const logger = ctx.logger('hello-plugin')
   logger.info('host loaded')
   console.log('hello-plugin/host.js loaded')
 
   // ---- Jira 配置：工程根 jira.config.json 优先，其次 ctx.settings ----
-  // 工程文件只在本仓库开发时存在（已 gitignore）；settings 服务来自 base profile
-  // （settings-file），二者都没有时 Jira 端点返回「未配置」错误，插件其余功能
-  // （ping）不受影响。
   const projectConfig = loadProjectJiraConfig(logger)
   const settingsService = ctx.get('settings')
   let settingsJira: JiraSettings = {}
@@ -212,17 +368,19 @@ export function apply(ctx: Context): void {
   }
   const resolveJiraSettings = (): JiraSettings => projectConfig ?? settingsJira
 
+  // ---- LLM 配置：工程根 llm.config.json（provider / model）----
+  const llmConfig = loadProjectLlmConfig(logger) ?? {}
+  if (llmConfig.provider === undefined || llmConfig.model === undefined) {
+    logger.warn('llm.config.json 未配置或缺失，jira/analyze 端点将返回错误')
+  }
+
   // ---- 宿主 → 客户端 的事件队列（长轮询）----
-  // 队列持有已 emit 但尚未被客户端取走的事件；waiters 记录当前挂起的长轮询请求。
-  // 语义是「广播」：一个事件被多个并发 poll（多标签页）各自看到。
-  const pending: PendingEvent[] = [] // 未取走的事件 { event, args }
+  const pending: PendingEvent[] = []
   const waiters: Array<{ resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }> = []
 
-  // 宿主主动推送一个事件。任何插件代码都能调用。
   function emit(event: string, args: unknown[] = []): void {
     pending.push({ event, args })
     logger.info('emit:', event, ...args)
-    // 唤醒所有挂起的 poll：取一次快照，分发给每一个等待者（广播）。
     if (waiters.length > 0) {
       const snapshot = pending.splice(0)
       while (waiters.length > 0) {
@@ -234,10 +392,12 @@ export function apply(ctx: Context): void {
     }
   }
 
-  // 注册 /hello 通道：/hello/ping + /hello/jira/todos + /hello/events/poll 长轮询。
+  // 注册 /hello 通道。
   ctx.connection.rpc.handle('/hello', async (endpoint, payload, signal): Promise<ConnectionRpcResult<unknown>> => {
+    const args = (payload as { args?: Record<string, unknown> } | undefined)?.args ?? {}
+
     if (endpoint === 'ping') {
-      const nameArg = (payload as { args?: { name?: unknown } } | undefined)?.args?.name
+      const nameArg = args.name
       const display = typeof nameArg === 'string' ? nameArg : '(anonymous)'
       logger.info('client ping:', display)
       return { ok: true, value: `pong from host, hello ${display}!` }
@@ -248,22 +408,46 @@ export function apply(ctx: Context): void {
         const todos = await fetchJiraTodos(resolveJiraSettings())
         return { ok: true, value: todos }
       } catch (error) {
-        if (error instanceof JiraConfigError) {
-          return rpcFailure(error.code, error.message)
-        }
+        if (error instanceof JiraConfigError) return rpcFailure(error.code, error.message)
         logger.warn('jira/todos failed:', String(error))
         return rpcFailure('jira-error', `读取 Jira 待办失败：${String(error)}`)
       }
     }
 
+    if (endpoint === 'jira/analyze') {
+      const key = typeof args.key === 'string' ? args.key : ''
+      if (key === '') return rpcFailure('bad-request', '缺少 key 参数')
+      try {
+        const settings = resolveJiraSettings()
+        const issue = await fetchJiraIssueDetail(settings, key)
+        const analysis = await generateLlmAnalysis(ctx, llmConfig, issue, signal)
+        return { ok: true, value: { key: issue.key, summary: issue.summary, analysis } }
+      } catch (error) {
+        if (error instanceof JiraConfigError) return rpcFailure(error.code, error.message)
+        logger.warn('jira/analyze failed:', String(error))
+        return rpcFailure('jira-error', `分析 Jira issue 失败：${String(error)}`)
+      }
+    }
+
+    if (endpoint === 'jira/comment') {
+      const key = typeof args.key === 'string' ? args.key : ''
+      const text = typeof args.text === 'string' ? args.text.trim() : ''
+      if (key === '') return rpcFailure('bad-request', '缺少 key 参数')
+      if (text === '') return rpcFailure('bad-request', '缺少评论内容')
+      try {
+        await addJiraComment(resolveJiraSettings(), key, text)
+        return { ok: true, value: { added: true } }
+      } catch (error) {
+        if (error instanceof JiraConfigError) return rpcFailure(error.code, error.message)
+        logger.warn('jira/comment failed:', String(error))
+        return rpcFailure('jira-error', `添加 Jira 评论失败：${String(error)}`)
+      }
+    }
+
     if (endpoint === 'events/poll') {
-      // 已有事件 → 立即取走全部返回；没有 → 挂起等待，超时或新事件到达时返回。
       if (pending.length > 0) {
         return { ok: true, value: pending.splice(0) }
       }
-      // 等待期间新事件到达：waiter.resolve(events) 由 emit 以广播方式调用。
-      // 超时：resolve(null) 表示本轮无事件。
-      // abort：从 waiters 移除并立即返回空数组，避免泄漏挂起连接。
       const events = await new Promise<PendingEvent[] | null>((resolve) => {
         let entry: { resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }
         const timer = setTimeout(() => {
@@ -293,8 +477,7 @@ export function apply(ctx: Context): void {
     return rpcFailure('bad-request', `unknown endpoint: ${endpoint}`)
   })
 
-  // 暴露 emit 给宿主端其他逻辑调用；这里示例：每 5 秒自动发一个事件，
-  // 证明「host 主动触发」不需要任何客户端请求。
+  // 每 5 秒自动发一个事件，证明「host 主动触发」不需要任何客户端请求。
   ctx.effect(() => {
     const timer = setInterval(() => {
       emit('hello/notice', ['host is alive at ' + new Date().toLocaleTimeString()])

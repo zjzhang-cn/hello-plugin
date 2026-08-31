@@ -17,7 +17,8 @@ tsdown.config.ts         双半区 bundle 配置（host: node ESM；client: Modu
 cordis.patch.yml         bundle patch 层：把宿主插件行插入启动图（正式：包名引用）
 dev.patch.yml            开发用 patch（绝对路径，已 gitignore）
 jira.config.example.json Jira 配置模板（含占位符，可提交）；真实凭据放 jira.config.json（已 gitignore）
-package.json             包清单：exports 两个半区 + dsh 集成字段
+llm.config.example.json  LLM 配置模板（provider/model，可提交）；真实配置放 llm.config.json（已 gitignore）
+package.json             包清单：exports 两个半区 + dsh 集成字段（dsh-llm 为运行时依赖）
 docs/
   dev-log.md                        开发日志（每次功能/修复必记，最新在上）
   learning-path.md                  学习路径（按章节由简入深）
@@ -48,7 +49,7 @@ docs/
 - **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`src/client/index.tsx` 经 `pnpm build` 编译和封装；浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。客户端半区**不写进** patch —— 由扫描发现。
 
-> 两个半区都已是 TypeScript：`tsconfig.host.json`（node 类型）+ `tsconfig.client.json`（DOM 类型），共用一份 `tsdown.config.ts`（数组配置：host → node ESM，client → ModuleLoader 工厂）。宿主 bundle 只内联 schemastery（运行时构建设置 schema），其余依赖均为 type-only，被擦除后产物无运行时裸 import，可直接以绝对路径加载。
+> 两个半区都已是 TypeScript：`tsconfig.host.json`（node 类型）+ `tsconfig.client.json`（DOM 类型），共用一份 `tsdown.config.ts`（数组配置：host → node ESM，client → ModuleLoader 工厂）。宿主 bundle 内联 schemastery（运行时构建设置 schema），`@deepseek-ai/dsh-llm` 标记为 external（其内部用 `createRequire` 读自身 package.json，内联会路径错位），运行时从 node_modules 解析（dsh-llm 是 harness 核心服务，始终挂载）。其余依赖均为 type-only，被擦除后产物无运行时裸 import，可直接以绝对路径加载。
 
 ## 通信机制（本仓库实现的两条链路）
 
@@ -69,7 +70,14 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
 
 - **配置优先级**：**工程根 `jira.config.json` 优先**（host 启动时从 bundle 目录向上逐级查找，开发时用，已 gitignore），其次 `ctx.settings` 注册的 `jira` namespace（`baseUrl` / `email` / `apiToken`，由 base profile 的 settings-file 提供，`$DSH_HOME/settings.yaml`）。两处都未配置时插件照常加载，`jira/todos` 端点返回 `jira-not-configured`。
 - **端点**：`/hello/jira/todos`。调用 `GET {baseUrl}/rest/api/3/search/jql`（Basic Auth），JQL `assignee = currentUser() AND resolution = Unresolved`，每项映射为 `{ key, summary, typeName, typeColor, typeIconUrl, statusName }`（类型颜色按名称匹配常见中英文 Jira 类型，否则从色板确定性取值；相对图标路径拼 baseUrl）。**注意 Cloud 实例已移除 `/rest/api/2/search`（410），须用 api/3。**
-- **客户端**：挂载后自动加载待办，展示为悬浮「我的待办」列表（每项含类型徽章）；点击按钮刷新 + ping；失败显示 `jira-error` 提示条。
+- **客户端**：挂载后自动加载待办，展示为悬浮「我的待办」列表（每项含类型徽章，点击可触发 LLM 分析）；头部 ⟳ 刷新；点击按钮刷新 + ping；失败显示 `jira-error` 提示条。
+
+### LLM 分析与评论（点击待办）
+
+- **配置**：工程根 `llm.config.json`（`provider` / `model`，已 gitignore，模板见 `llm.config.example.json`），host 从 bundle 目录向上逐级查找（同 jira.config.json 模式）。
+- **端点**：`/hello/jira/analyze`（args: `{ key }`）→ host 取 issue 详情（summary + description + 已有评论，ADF 转文本）→ 调 `ctx.llm.stream`（`inject` 不声明，`ctx.get('llm')` 可选获取，缺失时返回错误）→ 返回 `{ key, summary, analysis }`。LLM 调用用 `BlockAssembler` 聚合 `text-delta`，`finish.kind === 'error' | 'aborted'` 视为失败。
+- **端点**：`/hello/jira/comment`（args: `{ key, text }`）→ `POST /rest/api/3/issue/{key}/comment`，body 用 ADF（`{ type: 'doc', ... }`）→ 返回 `{ added: true }`。
+- **客户端**：点击待办项 → 展示「LLM 正在分析…」→ 分析面板（issue 标题 + 分析文本）→ 卡片内「添加到评论 / 取消」按钮 → 同意则调 comment 并显示「✅ 已添加到 Jira 评论」。
 
 ### 关键约束（踩过的坑）
 

@@ -21,8 +21,10 @@ export default defineConfig([
     },
   },
   // ---- 宿主半区（Node）----
-  // 单文件 ESM：schemastery（运行时用于构建设置 schema）内联进 bundle，
-  // 其余依赖均为 type-only import，会被类型擦除。产物被 dev.patch / cordis.patch 直接加载。
+  // 单文件 ESM：schemastery（运行时用于构建设置 schema）内联进 bundle；
+  // @deepseek-ai/dsh-llm 是运行时依赖（harness 核心服务，始终挂载），标记为
+  // external，运行时从 node_modules 解析（其内部用 createRequire 读自己 package.json，
+  // 内联会导致路径错位）。产物被 dev.patch / cordis.patch 直接加载。
   {
     entry: { host: 'src/host/index.ts' },
     outDir: 'lib',
@@ -31,6 +33,9 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     clean: false,
+    deps: {
+      neverBundle: ['@deepseek-ai/dsh-llm'],
+    },
     outputOptions: {
       entryFileNames: 'host.js',
     },
