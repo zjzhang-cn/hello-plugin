@@ -2,6 +2,18 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 客户端点击发起新会话：Agent 获取 Google 新闻并总结
+
+**类型**：功能
+**涉及**：`src/host/index.ts`、`src/client/index.tsx`、`README.md`、`docs/dev-log.md`
+**背景 / 问题**：在 client 发起一个点击请求 → 宿主发起一个新会话 → 会话功能是通过 Agent 获取最新 Google 新闻并总结，LLM 交互信息都在新会话中进行（dsh Web UI 会话列表可见）。
+**改动**：
+- **宿主**：新增 `/hello/news/start` 端点 —— `ctx.agents.create()` 创建新会话（sessionId `news-<uuid>`，agentOptions 取 `llm.config.json` 的 provider/model）→ `setup` 里注册作用域工具 `google_news`（fetch Google News RSS，正则解析 title/link/pubDate，取前 15 条）→ `agent.followup()` 让 Agent 获取新闻并总结 → 不 await whenIdle（会话后台运行，用户可在 Web UI 实时查看）。
+- **工具作用域**：`ctx.tools.register` 走 `ScopedLayers` —— 从 agentCtx 调用仅该会话的 Agent 可见，不污染全局。
+- **客户端**：待办卡片头部新增「📰」按钮（loading 时变 …）→ 调 `news/start` → 卡片下方显示「✅ 已创建会话 <id>，在会话列表查看 Agent 总结」或红色错误条。
+- **会话可见性**：宿主创建会话自动触发 `api-session/added` Remote 事件，dsh Web UI 会话列表自动出现新会话，点开可见完整 LLM 交互（user/message → google_news 工具调用 → assistant 总结）。
+**验证**：`pnpm build` 与双半区类型检查通过；`node --check lib/host.js` 通过；bundle 含 `google_news` 与 `news/start`；Google News RSS 真实抓取解析正常（15 条）；实际链路需在挂载本 bundle 的 dsh profile 中点击 📰 验证。
+
 ## 2026-08-31 — LLM 分析与评论（点击待办 → 分析 → 确认写回 Jira）
 
 **类型**：功能

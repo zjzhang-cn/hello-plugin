@@ -43,6 +43,10 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [analysisError, setAnalysisError] = React.useState<string | null>(null)
   const [commentState, setCommentState] = React.useState<'idle' | 'submitting' | 'added' | 'error'>('idle')
   const [commentError, setCommentError] = React.useState<string | null>(null)
+  // Google 新闻会话：点击「📰」后宿主创建新会话，Agent 获取新闻并总结。
+  const [newsSession, setNewsSession] = React.useState<string | null>(null)
+  const [newsLoading, setNewsLoading] = React.useState(false)
+  const [newsError, setNewsError] = React.useState<string | null>(null)
 
   const loadTodos = (): void => {
     if (loading) return
@@ -103,6 +107,22 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
     setAnalysis(null)
     setCommentState('idle')
     setCommentError(null)
+  }
+
+  // 点击「📰」：让宿主创建新会话，Agent 获取最新 Google 新闻并总结。
+  // 新会话会出现在 dsh Web UI 的会话列表，可点开查看完整 LLM 交互。
+  const startNewsSession = (): void => {
+    if (newsLoading) return
+    setNewsLoading(true)
+    setNewsError(null)
+    void connection.rpc
+      .call('/hello', 'news/start', { args: {} })
+      .then((result) => {
+        if (result.ok) setNewsSession((result.value as { sessionId: string }).sessionId)
+        else setNewsError(`${result.error.code}: ${result.error.message}`)
+      })
+      .catch((error: unknown) => setNewsError(String(error)))
+      .finally(() => setNewsLoading(false))
   }
 
   // 挂载后立即加载一次待办列表；点击按钮时也刷新。
@@ -247,6 +267,16 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
     },
     '我的待办', loading ? '…' : todos !== null ? `(${todos.length})` : '',
     React.createElement('button', {
+      onClick: startNewsSession,
+      disabled: newsLoading,
+      title: '获取 Google 最新新闻并总结（新会话）',
+      style: {
+        border: 'none', background: 'transparent', cursor: 'pointer',
+        fontSize: '14px', lineHeight: '1', padding: '2px 4px',
+        color: newsLoading ? '#a0aec0' : '#0e93ab',
+      },
+    }, newsLoading ? '…' : '📰'),
+    React.createElement('button', {
       onClick: loadTodos,
       title: '刷新待办',
       style: {
@@ -271,7 +301,28 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
           style: { padding: '12px 10px', fontSize: '12px', color: '#6a7c99', textAlign: 'center' },
         }, '没有待办事项 🎉')]
       : []),
-    ...(todos !== null ? todoList : [])),
+    ...(todos !== null ? todoList : []),
+    // 新闻会话提示条：宿主已创建新会话，Agent 正在获取新闻并总结。
+    ...(newsError !== null
+      ? [React.createElement('div', {
+          key: 'news-error',
+          style: {
+            background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
+            borderRadius: '8px', margin: '8px', padding: '6px 10px', fontSize: '12px',
+            color: '#d64540',
+          },
+        }, `Google 新闻：${newsError}`)]
+      : []),
+    ...(newsSession !== null
+      ? [React.createElement('div', {
+          key: 'news-session',
+          style: {
+            background: 'rgba(22,130,93,0.08)', border: '1px solid rgba(22,130,93,0.35)',
+            borderRadius: '8px', margin: '8px', padding: '6px 10px', fontSize: '12px',
+            color: '#16825d',
+          },
+        }, `✅ 已创建会话 ${newsSession}，在会话列表查看 Agent 总结`)]
+      : [])),
     // LLM 分析面板（点击待办项后出现）
     ...(analysisLoading
       ? [React.createElement('div', {

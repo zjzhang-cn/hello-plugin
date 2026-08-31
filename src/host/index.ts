@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -49,7 +50,8 @@ export const name = 'dsh-hello-plugin'
 // 依赖 connection 服务（宿主端由 client-connection 提供），用它注册 RPC 通道，
 // 供浏览器客户端通过 ctx.connection.rpc.call 调用。settings 服务由 base profile
 // 的 settings-file 提供，这里用 ctx.get 可选获取（拿不到也能加载插件）。
-export const inject = ['connection']
+// agents 服务（core/agent）用于创建新会话驱动 Agent。
+export const inject = ['connection', 'agents']
 
 // 长轮询超时：客户端挂起一个 poll 请求，宿主在超时内等不到新事件就返回空数组。
 // 客户端收到空数组后立即发起下一次 poll —— 有事件时近乎实时，无事件时只挂一个请求。
@@ -336,6 +338,68 @@ async function generateLlmAnalysis(
   return text
 }
 
+// ---- Google News 工具（新会话 Agent 使用）----
+
+/** 一条 Google News 新闻。 */
+interface GoogleNewsItem {
+  title: string
+  link: string
+  pubDate: string
+}
+
+/**
+ * 抓取 Google News RSS 并解析为新闻列表（标题 + 链接 + 发布时间）。
+ * Node 全局 fetch 可用（harness 无网络沙箱）；RSS 用正则做简易解析。
+ */
+async function fetchGoogleNews(locale: string): Promise<GoogleNewsItem[]> {
+  const region = locale.toUpperCase()
+  const url = `https://news.google.com/rss?hl=${locale}&gl=${region}&ceid=${region}:${locale}`
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw new Error(`Google News ${response.status} ${response.statusText}`)
+  const xml = await response.text()
+  const items: GoogleNewsItem[] = []
+  const itemPattern = /<item>([\s\S]*?)<\/item>/g
+  for (const match of xml.matchAll(itemPattern)) {
+    const block = match[1] ?? ''
+    const title = (block.match(/<title>([\s\S]*?)<\/title>/) ?? [])[1] ?? ''
+    const link = (block.match(/<link>([\s\S]*?)<\/link>/) ?? [])[1] ?? ''
+    const pubDate = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/) ?? [])[1] ?? ''
+    if (title !== '') items.push({ title, link, pubDate })
+  }
+  return items.slice(0, 15) // 取前 15 条，避免上下文过长
+}
+
+/**
+ * 在 Agent 作用域内注册 google_news 工具。
+ * 从 agentCtx 调用 ctx.tools.register 走 ScopedLayers —— 仅该会话的 Agent 可见，
+ * 不污染全局工具表。agentCtx 的类型不含 tools 声明（core/tools 的模块扩展未引入），
+ * 这里用结构化宽松类型直传（宿主 bundle dts: false，运行时无碍）。
+ */
+function installGoogleNewsTool(agentCtx: Context): void {
+  ;(agentCtx as unknown as { tools: { register(definition: object): () => void } }).tools.register({
+    name: 'google_news',
+    description: '获取 Google News 最新新闻列表（标题 + 链接 + 发布时间）。用于了解当前热点新闻。',
+    parameters: { locale: { type: 'string', description: '语言地区，如 zh-CN 或 en-US' } },
+    output: {
+      schema: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            title: { type: 'string' }, link: { type: 'string' }, pubDate: { type: 'string' },
+          },
+        },
+      },
+      render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute(args: unknown) {
+      const raw = (args as { locale?: unknown } | undefined)?.locale
+      const locale = typeof raw === 'string' && raw !== '' ? raw : 'zh-CN'
+      return fetchGoogleNews(locale)
+    },
+  })
+}
+
 // ---- 错误与 RPC ----
 
 class JiraConfigError extends Error {
@@ -441,6 +505,37 @@ export function apply(ctx: Context): void {
         if (error instanceof JiraConfigError) return rpcFailure(error.code, error.message)
         logger.warn('jira/comment failed:', String(error))
         return rpcFailure('jira-error', `添加 Jira 评论失败：${String(error)}`)
+      }
+    }
+
+    if (endpoint === 'news/start') {
+      // 发起一个新会话：Agent 通过 google_news 工具获取最新 Google 新闻并总结。
+      // LLM 交互过程都会写入该会话日志，dsh Web UI 会话列表自动出现（api-session/added）。
+      if (llmConfig.provider === undefined || llmConfig.model === undefined) {
+        return rpcFailure('llm-not-configured', 'llm.config.json 未配置 provider/model')
+      }
+      const agents = ctx.get('agents')
+      if (agents === undefined) return rpcFailure('agents-unavailable', 'agents 服务不可用')
+      const sessionId = 'news-' + randomUUID()
+      try {
+        const handle = await agents.create({
+          sessionId: sessionId as never, // 类型擦除，运行时无碍
+          meta: { cwd: process.cwd() },
+          agentOptions: { provider: llmConfig.provider, model: llmConfig.model },
+          setup: (agentCtx: Context) => { installGoogleNewsTool(agentCtx) },
+        })
+        handle.agent.followup(createUserMessage({
+          content: [{
+            type: 'text' as const,
+            text: '请使用 google_news 工具获取最新 Google 新闻，然后用简洁的中文总结当前最重要的 5 条新闻，每条附链接。',
+          }],
+          source: { kind: 'plugin' as const, plugin: name },
+        }))
+        // 不 await whenIdle —— 会话在后台运行，用户可在 Web UI 实时查看交互过程。
+        return { ok: true, value: { sessionId } }
+      } catch (error) {
+        logger.warn('news/start failed:', String(error))
+        return rpcFailure('news-error', `发起新闻会话失败：${String(error)}`)
       }
     }
 
