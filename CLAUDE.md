@@ -2,13 +2,16 @@
 
 dsh-hello-plugin 是 dsh（DeepSeek Harness，全插件化 Cordis agent 框架）的最小可运行插件示例，演示「双面插件」的完整接入：宿主半区（Node）+ 客户端半区（浏览器）+ 双向通信。
 
-本仓库自身没有构建/测试设施（无 scripts、无依赖）—— 它是被 `deepseek-harness` 工作区消费的插件。开发流程是改代码 + `node --check` + 在真实 dsh profile 里验证。
+客户端以 TypeScript 编写，通过 `pnpm build` 编译为浏览器 bundle；宿主半区仍作为普通 JavaScript 由 `deepseek-harness` 工作区消费。
 
 ## 仓库布局
 
 ```
 host.js                  宿主半区：Node 端 Cordis 插件入口，注册 /hello RPC 通道与事件队列
-client.js                客户端半区：浏览器 bundle，悬浮按钮 + 长轮询收事件
+src/client/index.tsx     客户端半区 TypeScript 源码：悬浮按钮 + 长轮询收事件
+lib/client.js            由 pnpm build 生成的客户端浏览器 bundle
+tsconfig.client.json     客户端 TypeScript 编译配置
+tsdown.config.ts         将编译结果封装为 ModuleLoader 工厂的 bundle 配置
 cordis.patch.yml         bundle patch 层：把宿主插件行插入启动图（正式：包名引用）
 dev.patch.yml            开发用 patch（绝对路径，已 gitignore）
 package.json             包清单：exports 两个半区 + dsh 集成字段
@@ -39,7 +42,7 @@ docs/
 同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理。深入理解见 [docs/plugin-dev-handbook.md](docs/plugin-dev-handbook.md)，能力全目录见 [docs/plugin-capability-catalog.md](docs/plugin-capability-catalog.md)。
 
 - **宿主半区**：`package.json` 的 `exports["."]` → `host.js`。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。导出 `name` + `apply(ctx)`。
-- **客户端半区**：`exports["./client"]` → `client.js`，由 `dsh.client.platform = "web"` 声明。dsh-client-modules 扫描发现。浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
+- **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`src/client/index.tsx` 经 `pnpm build` 编译和封装；浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。客户端半区**不写进** patch —— 由扫描发现。
 
 ## 通信机制（本仓库实现的两条链路）
@@ -79,14 +82,15 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
 ## 开发与验证
 
 ```sh
-node --check host.js client.js     # 语法检查（无需安装依赖）
+pnpm build                         # TypeScript 检查并生成 lib/client.js
+node --check host.js                # 宿主脚本语法检查
 ```
 
 启动挂载本 bundle 的 dsh profile 验证：
 
 1. 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`。
-2. Web 端右下角出现悬浮按钮；点击后宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host`。
-3. 宿主每 5 秒 emit 一次 `hello/notice`（setInterval），客户端按钮上方应持续出现新的气泡条（每次带新的时间戳）—— 若气泡只出现一次就不再更新，检查 client.js 的 poll 循环 `inflight` 是否复位。
+2. Web 端右下角出现悬浮按钮；点击后宿主日志追加 `client ping: browser`，按钮显示 `pong from host`。
+3. 宿主每 5 秒 emit 一次 `hello/notice`（setInterval），客户端按钮上方应持续出现新的气泡条（每次带新的时间戳）—— 若气泡只出现一次就不再更新，检查 `src/client/index.tsx` 的 poll 循环 `inflight` 是否复位。
 
 ## 改动纪律
 

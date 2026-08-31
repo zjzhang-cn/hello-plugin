@@ -1,6 +1,14 @@
 # 开发日志（Development Log）
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
+
+## 2026-08-31 — 客户端迁移为 TypeScript 并提供浏览器构建
+
+**类型**：重构
+**涉及**：删除 `client.js`、`src/client/index.tsx`、`tsconfig.client.json`、`tsdown.config.ts`、`package.json`、`.gitignore`、`README.md`、`CLAUDE.md`
+**背景 / 问题**：客户端代码以手写经典脚本维护，缺少静态类型检查和可重复的浏览器 bundle 构建入口。
+**改动**：将 `HelloPill`、RPC 与长轮询逻辑迁移为严格 TypeScript；新增 `tsc` + `tsdown` 两阶段构建，产物为保留 ModuleLoader 协议的 `lib/client.js`；包导出改为指向构建产物。
+**验证**：`pnpm build`。
 >
 > **更新开发日志时，同时将一条简述更新到 `README.md` 的「开发日志」章节**（最新在上，一句话概括标题与要点，指向本文件）。
 >
