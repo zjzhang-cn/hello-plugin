@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道供客户端调用，提供事件队列，可主动向客户端推送事件；通过 `ctx.settings` 读取 Jira 配置并调用 Jira API 返回 Issue Type 列表 |
-| `src/client/index.tsx` | 客户端 TypeScript 源码：注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主（ping + 读取 Jira Issue Type），同时以长轮询方式接收宿主推送的事件 |
+| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道供客户端调用（ping + 读取 Jira 待办列表） |
+| `src/client/index.tsx` | 客户端 TypeScript 源码：注册右下角悬浮组件 `HelloPill` 并注入 `shell.overlay` 插槽；展示「我的待办」Jira 列表（类型徽章内嵌），点击按钮刷新待办并 ping 宿主 |
 | `lib/host.js` | 由 `pnpm build` 生成的宿主半区 bundle（Node ESM 单文件，无运行时裸 import） |
 | `lib/client.js` | 由 `pnpm build` 生成的客户端浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
@@ -35,9 +35,9 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 宿主机日志里会输出 `client ping: ...`，可用于确认双向链路打通。
 
-## Jira Issue Type 类别条
+## Jira 待办列表
 
-宿主半区通过以下顺序解析 Jira 连接配置（**工程内 `jira.config.json` 优先，其次 `ctx.settings`**），再调用 Jira REST API，客户端点击按钮时拉取并渲染为彩色类别徽章条：
+宿主半区通过以下顺序解析 Jira 连接配置（**工程内 `jira.config.json` 优先，其次 `ctx.settings`**），再调用 Jira REST API 查询指派给当前用户的未解决问题，客户端以「我的待办」列表展示：
 
 - **工程配置文件**（开发时用，已 gitignore 不提交凭据）：工程根放 `jira.config.json`，host 启动时从 bundle 所在目录向上逐级查找：
   ```json
@@ -55,22 +55,9 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
     email: you@example.com
     apiToken: <Jira API Token>
   ```
-  两处都未配置时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`，客户端显示 `Jira: jira-not-configured` 提示条。
-- **宿主端点**：`/hello/jira/issue-types` 调用 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth，10 秒超时），把每个 Issue Type 映射为 `{ id, name, color, iconUrl }` —— 颜色按名称匹配常见 Jira 类型（Bug/Task/Story/Epic…），其余从色板确定性取值；相对图标路径自动拼接 baseUrl。
-- **客户端**：点击 `HelloPill` 时同时调用该端点，类别条渲染在按钮上方（每项为图标或代表色圆点 + 名称）；调用失败显示红色错误条。
-
-## 宿主主动推送到客户端
-
-`dsh` 的标准「宿主 → 客户端」事件推送走 api-gateway 的 Remote events 转发（`ctx.emit` → 网关广播 → 客户端 `ctx.remote.$on`）。但它依赖应用级 `api-remotes` 的 allowlist，且 `typertGateway.registerRemoteEvents` 是**单例**（已被 `api-remotes` 占用）—— 第三方插件的自定义事件名无法进 allowlist。
-
-因此本插件采用**长轮询**复用已验证的 `/hello` 通道实现反向推送，不改 harness：
-
-- **宿主端**：维护一个事件队列 `pending` + 挂起等待者 `waiters`。`emit(event, args)` 把事件入队并唤醒所有挂起的 poll。`/hello/events/poll` 端点：有事件立即返回全部，无事件则挂起等待（15 秒超时返回空数组，abort 时清理等待者）。语义是**广播**：一个事件被多个并发 poll 各自看到。
-- **客户端**：`HelloPill` 挂载后启动长轮询循环，反复 `connection.rpc.call('/hello', 'events/poll', { args: {} })`。收到空数组立即发起下一次（保持一个常驻等待连接）；收到事件则展示为按钮上方的气泡条（最新一条高亮）；传输失败退避 3 秒重试。
-
-宿主每 5 秒自动 emit 一个 `hello/notice` 事件，无需任何客户端操作即可在 Web 端持续看到气泡 —— 这就是「host 主动触发事件到 client」。
-
-长轮询核心逻辑已用独立脚本验证（5 场景：等待中唤醒、多 waiter 广播、超时、abort、已有事件立即返回）。
+  两处都未配置时插件照常加载，`jira/todos` 端点返回 `jira-not-configured`，客户端显示 `Jira: jira-not-configured` 提示条。
+- **宿主端点**：`/hello/jira/todos` 调用 `GET {baseUrl}/rest/api/3/search/jql`（Basic Auth，10 秒超时），JQL 为 `assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC`，每项映射为 `{ key, summary, typeName, typeColor, typeIconUrl, statusName }` —— 类型颜色按名称匹配常见中英文 Jira 类型，其余从色板确定性取值；相对图标路径自动拼接 baseUrl。
+- **客户端**：挂载后自动加载待办，展示为悬浮卡片「我的待办」列表；每项为类型徽章（图标或代表色圆点 + 类型名）+ 摘要 + `KEY · 状态`；点击底部按钮刷新待办并 ping 宿主；调用失败显示红色错误条。
 
 ## 本机 Chrome 调试远端客户端
 
@@ -84,6 +71,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 Jira 待办列表（替代类别条）** — host 改用 `/rest/api/3/search/jql` 查询指派给我的未解决 issue，新增 `/hello/jira/todos` 端点；客户端展示「我的待办」列表（类型徽章内嵌），移除类别条与长轮询事件气泡；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 Jira 配置支持放工程内（jira.config.json 优先）** — host 从工程根读取 `jira.config.json`（gitignore，含示例模板 `jira.config.example.json`），优先于全局 settings.yaml；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 宿主半区迁移为 TypeScript + 读取 Jira Issue Type** — `host.js` 迁为 `src/host/index.ts`（构建为 `lib/host.js` Node ESM 单文件），并通过 `ctx.settings` 注册 `jira` namespace、新增 `/hello/jira/issue-types` 端点；客户端点击按钮时渲染 Jira 类别条；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 支持本机 Chrome 调试远端客户端 TSX** — bundle source map 直接映射到 TSX，并记录 Remote-SSH 下通过端口转发使用本机 DevTools 的流程；详见 [开发日志](docs/dev-log.md)。
@@ -110,10 +98,9 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
    pnpm build
    node --check lib/host.js lib/client.js
    ```
-2. 启动一个挂载了本 bundle 的 dsh profile（`dev.patch.yml` 指向 `lib/host.js`），宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端应能看到右下角的「👋 hello world」悬浮按钮。
-3. 点击悬浮按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，随后恢复计数 —— 表示客户端 → 宿主的 RPC 链路打通。
-4. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路打通。
-5. 配置 Jira 凭据（任选其一，工程文件优先）后点击按钮，按钮上方出现 Jira Issue Type 类别条（每项为图标或代表色圆点 + 名称）；未配置时出现 `Jira: jira-not-configured` 提示条。开发时在工程根放 `jira.config.json`（见 `jira.config.example.json`）即可，无需改全局 settings.yaml。
+2. 启动一个挂载了本 bundle 的 dsh profile（`dev.patch.yml` 指向 `lib/host.js`），宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端右下角出现「我的待办」悬浮卡片。
+3. 点击底部按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，随后恢复计数 —— 表示客户端 → 宿主的 RPC 链路打通。
+4. 配置 Jira 凭据（任选其一，工程文件优先）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时显示 `Jira: jira-not-configured` 提示条。开发时在工程根放 `jira.config.json`（见 `jira.config.example.json`）即可，无需改全局 settings.yaml。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 

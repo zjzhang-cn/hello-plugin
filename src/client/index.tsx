@@ -4,16 +4,13 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 
-interface HelloEvent {
-  event: string
-  args: unknown[]
-}
-
-interface JiraIssueType {
-  id: string
-  name: string
-  color: string
-  iconUrl: string
+interface JiraTodo {
+  key: string
+  summary: string
+  typeName: string
+  typeColor: string
+  typeIconUrl: string
+  statusName: string
 }
 
 interface HelloPillProps {
@@ -23,9 +20,32 @@ interface HelloPillProps {
 function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [count, setCount] = React.useState(0)
   const [reply, setReply] = React.useState<string | null>(null)
-  const [events, setEvents] = React.useState<string[]>([])
-  const [issueTypes, setIssueTypes] = React.useState<JiraIssueType[] | null>(null)
-  const [issueTypesError, setIssueTypesError] = React.useState<string | null>(null)
+  const [todos, setTodos] = React.useState<JiraTodo[] | null>(null)
+  const [todosError, setTodosError] = React.useState<string | null>(null)
+  const [loading, setLoading] = React.useState(false)
+
+  const loadTodos = (): void => {
+    if (loading) return
+    setLoading(true)
+    setTodosError(null)
+    void connection.rpc
+      .call('/hello', 'jira/todos', { args: {} })
+      .then((result) => {
+        if (result.ok) {
+          setTodos(result.value as JiraTodo[])
+        } else {
+          setTodosError(`${result.error.code}: ${result.error.message}`)
+        }
+      })
+      .catch((error: unknown) => setTodosError(String(error)))
+      .finally(() => setLoading(false))
+  }
+
+  // 挂载后立即加载一次待办列表；点击按钮时也刷新。
+  React.useEffect(() => {
+    loadTodos()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection])
 
   const onClick = (): void => {
     setCount((currentCount) => currentCount + 1)
@@ -36,48 +56,50 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         else setReply(`error: ${result.error.code}: ${result.error.message}`)
       })
       .catch((error: unknown) => setReply(`error: ${String(error)}`))
-    void loadIssueTypes()
+    loadTodos()
   }
 
-  const loadIssueTypes = (): void => {
-    setIssueTypesError(null)
-    void connection.rpc
-      .call('/hello', 'jira/issue-types', { args: {} })
-      .then((result) => {
-        if (result.ok) {
-          setIssueTypes(result.value as JiraIssueType[])
-        } else {
-          setIssueTypesError(`${result.error.code}: ${result.error.message}`)
-        }
-      })
-      .catch((error: unknown) => setIssueTypesError(String(error)))
-  }
-
-  React.useEffect(() => {
-    let cancelled = false
-    let inflight = false
-    async function poll(): Promise<void> {
-      if (cancelled || inflight) return
-      inflight = true
-      try {
-        const result = await connection.rpc.call('/hello', 'events/poll', { args: {} })
-        inflight = false
-        if (!cancelled && result.ok && Array.isArray(result.value)) {
-          const incoming = (result.value as HelloEvent[]).map((item) => `${item.event}: ${item.args.join(' ')}`)
-          if (incoming.length > 0) setEvents((previousEvents) => [...incoming.reverse(), ...previousEvents].slice(0, 5))
-        }
-      } catch {
-        inflight = false
-        if (!cancelled) {
-          setTimeout(poll, 3_000)
-          return
-        }
-      }
-      if (!cancelled) void poll()
-    }
-    void poll()
-    return () => { cancelled = true }
-  }, [connection])
+  // 待办列表主体：每项 = 类型徽章 + key + summary + 状态。
+  const todoList = todos === null
+    ? []
+    : todos.map((todo) => React.createElement('div', {
+        key: todo.key,
+        style: {
+          display: 'flex', alignItems: 'center', gap: '8px',
+          padding: '6px 8px', borderBottom: '1px solid rgba(0,0,0,0.06)',
+        },
+      },
+      React.createElement('span', {
+        title: todo.typeName,
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.12)',
+          borderRadius: '999px', padding: '2px 7px', fontSize: '11px',
+          color: '#475569', whiteSpace: 'nowrap', flexShrink: 0,
+        },
+      },
+      todo.typeIconUrl !== ''
+        ? React.createElement('img', {
+            src: todo.typeIconUrl,
+            alt: '',
+            style: { width: '12px', height: '12px', objectFit: 'contain' },
+          })
+        : React.createElement('span', {
+            style: {
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: todo.typeColor, flexShrink: 0,
+            },
+          }),
+      todo.typeName),
+      React.createElement('div', {
+        style: { display: 'flex', flexDirection: 'column', minWidth: '0', flex: '1' },
+      },
+      React.createElement('div', {
+        style: { fontSize: '12px', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      }, todo.summary === '' ? todo.key : todo.summary),
+      React.createElement('div', {
+        style: { fontSize: '11px', color: '#6a7c99', marginTop: '1px' },
+      }, `${todo.key}${todo.statusName !== '' ? ' · ' + todo.statusName : ''}`))))
 
   return React.createElement(
     'div',
@@ -88,56 +110,38 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         fontFamily: 'system-ui, sans-serif',
       },
     },
-    ...events.map((text, index) => React.createElement('div', {
-      key: text + index,
+    // 待办列表卡片
+    React.createElement('div', {
       style: {
-        background: index === 0 ? 'rgba(79,124,255,0.12)' : 'rgba(0,0,0,0.06)',
-        border: '1px solid rgba(79,124,255,0.35)', borderRadius: '8px', padding: '6px 10px',
-        fontSize: '12px', color: index === 0 ? '#4f7cff' : '#6a7c99', maxWidth: '260px',
+        background: 'rgba(255,255,255,0.96)', border: '1px solid rgba(0,0,0,0.12)',
+        borderRadius: '10px', width: '300px', maxHeight: '360px', overflowY: 'auto',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
       },
-    }, text)),
-    ...(issueTypesError !== null
+    },
+    React.createElement('div', {
+      style: {
+        padding: '8px 10px', fontSize: '12px', fontWeight: 600, color: '#1e293b',
+        borderBottom: '1px solid rgba(0,0,0,0.08)', display: 'flex',
+        justifyContent: 'space-between', alignItems: 'center',
+      },
+    }, '我的待办', loading ? '…' : todos !== null ? `(${todos.length})` : ''),
+    ...(todosError !== null
       ? [React.createElement('div', {
           key: 'jira-error',
           style: {
             background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
-            borderRadius: '8px', padding: '6px 10px', fontSize: '12px',
-            color: '#d64540', maxWidth: '260px', textAlign: 'right',
+            borderRadius: '8px', margin: '8px', padding: '6px 10px', fontSize: '12px',
+            color: '#d64540',
           },
-        }, `Jira: ${issueTypesError}`)]
+        }, `Jira: ${todosError}`)]
       : []),
-    ...(issueTypes !== null
+    ...(todos !== null && todos.length === 0 && todosError === null
       ? [React.createElement('div', {
-          key: 'jira-types',
-          style: {
-            display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end',
-            gap: '6px', maxWidth: '280px',
-          },
-        },
-        ...issueTypes.map((issueType) => React.createElement('div', {
-          key: issueType.id,
-          title: issueType.name,
-          style: {
-            display: 'flex', alignItems: 'center', gap: '5px',
-            background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.12)',
-            borderRadius: '999px', padding: '3px 9px', fontSize: '12px',
-            color: '#334155',
-          },
-        },
-        issueType.iconUrl !== ''
-          ? React.createElement('img', {
-              src: issueType.iconUrl,
-              alt: '',
-              style: { width: '14px', height: '14px', objectFit: 'contain' },
-            })
-          : React.createElement('span', {
-              style: {
-                width: '10px', height: '10px', borderRadius: '50%',
-                background: issueType.color, flexShrink: 0,
-              },
-            }),
-        issueType.name)))]
+          key: 'jira-empty',
+          style: { padding: '12px 10px', fontSize: '12px', color: '#6a7c99', textAlign: 'center' },
+        }, '没有待办事项 🎉')]
       : []),
+    ...(todos !== null ? todoList : [])),
     React.createElement('button', {
       onClick,
       style: {

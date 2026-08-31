@@ -2,15 +2,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import type { HostConnectionHandle, ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
+import type { ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
 
 // ---- 类型定义 ----
-
-interface PendingEvent {
-  event: string
-  args: unknown[]
-}
 
 interface JiraSettings {
   baseUrl?: string | undefined
@@ -18,11 +13,14 @@ interface JiraSettings {
   apiToken?: string | undefined
 }
 
-interface JiraIssueType {
-  id: string
-  name: string
-  color: string
-  iconUrl: string
+/** 一条 Jira 待办（指派给当前用户的未解决问题）。 */
+interface JiraTodo {
+  key: string
+  summary: string
+  typeName: string
+  typeColor: string
+  typeIconUrl: string
+  statusName: string
 }
 
 // ---- 常量 ----
@@ -34,10 +32,6 @@ export const name = 'dsh-hello-plugin'
 // 的 settings-file 提供，这里用 ctx.get 可选获取（拿不到也能加载插件）。
 export const inject = ['connection']
 
-// 长轮询超时：客户端挂起一个 poll 请求，宿主在超时内等不到新事件就返回空数组。
-// 客户端收到空数组后立即发起下一次 poll —— 有事件时近乎实时，无事件时只挂一个请求。
-const POLL_TIMEOUT_MS = 15_000
-
 // Jira 常见 Issue Type 的代表色（按名称精确匹配）；其余按名称 hash 从色板取色。
 const ISSUE_TYPE_COLORS: Readonly<Record<string, string>> = {
   Bug: '#d04437',
@@ -48,6 +42,13 @@ const ISSUE_TYPE_COLORS: Readonly<Record<string, string>> = {
   Improvement: '#1d8b8b',
   'Sub-task': '#8c9bac',
   SubTask: '#8c9bac',
+  // 常见中文 Issue Type 名（Jira Cloud 中文界面）
+  故事: '#16825d',
+  任务: '#3572b0',
+  缺陷: '#d04437',
+  史诗: '#7a3e9d',
+  改进: '#1d8b8b',
+  子任务: '#8c9bac',
 }
 
 const FALLBACK_COLORS: readonly string[] = [
@@ -74,10 +75,13 @@ function resolveIconUrl(baseUrl: string, iconUrl: string | undefined): string {
 }
 
 /**
- * 调用 Jira REST API 读取 Issue Type 列表。
- * 接口：GET {baseUrl}/rest/api/2/issuetype，Basic Auth（email + apiToken）。
+ * 调用 Jira REST API 读取指派给当前用户的未解决 issue（待办）。
+ * 接口：GET {baseUrl}/rest/api/3/search/jql，
+ * JQL：assignee = currentUser() AND resolution = Unresolved。
+ *
+ * 注意：Cloud 实例已移除 /rest/api/2/search（410），须用 /rest/api/3/search/jql。
  */
-async function fetchJiraIssueTypes(settings: JiraSettings): Promise<JiraIssueType[]> {
+async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
   const baseUrl = settings.baseUrl?.trim()
   const email = settings.email?.trim()
   const apiToken = settings.apiToken?.trim()
@@ -85,7 +89,10 @@ async function fetchJiraIssueTypes(settings: JiraSettings): Promise<JiraIssueTyp
   if (email === '' || email === undefined) throw new JiraConfigError('jira.email 未配置')
   if (apiToken === '' || apiToken === undefined) throw new JiraConfigError('jira.apiToken 未配置')
 
-  const url = baseUrl.replace(/\/+$/, '') + '/rest/api/2/issuetype'
+  const jql = 'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC'
+  const url = baseUrl.replace(/\/+$/, '') + '/rest/api/3/search/jql'
+    + '?jql=' + encodeURIComponent(jql)
+    + '&fields=key,summary,issuetype,status&maxResults=50'
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
@@ -97,20 +104,32 @@ async function fetchJiraIssueTypes(settings: JiraSettings): Promise<JiraIssueTyp
     const detail = await response.text().catch(() => '')
     throw new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
   }
-  const body = await response.json() as Array<{
-    id?: unknown
-    name?: unknown
-    iconUrl?: unknown
-  }>
-  if (!Array.isArray(body)) throw new Error('Jira API 返回结构异常（期望数组）')
+  const body = await response.json() as {
+    issues?: Array<{
+      key?: unknown
+      fields?: {
+        summary?: unknown
+        issuetype?: { name?: unknown; iconUrl?: unknown }
+        status?: { name?: unknown }
+      }
+    }>
+  }
+  const issues = body.issues
+  if (!Array.isArray(issues)) throw new Error('Jira API 返回结构异常（期望 issues 数组）')
 
-  return body.filter((item) => typeof item.name === 'string').map((item) => {
-    const issueName = item.name as string
+  return issues.filter((issue) => typeof issue.key === 'string').map((issue) => {
+    const fields = issue.fields ?? {}
+    const typeName = typeof fields.issuetype?.name === 'string' ? fields.issuetype.name : 'Issue'
     return {
-      id: String(item.id ?? issueName),
-      name: issueName,
-      color: colorForIssueType(issueName),
-      iconUrl: resolveIconUrl(baseUrl, typeof item.iconUrl === 'string' ? item.iconUrl : undefined),
+      key: issue.key as string,
+      summary: typeof fields.summary === 'string' ? fields.summary : '',
+      typeName,
+      typeColor: colorForIssueType(typeName),
+      typeIconUrl: resolveIconUrl(
+        baseUrl,
+        typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined,
+      ),
+      statusName: typeof fields.status?.name === 'string' ? fields.status.name : '',
     }
   })
 }
@@ -167,7 +186,7 @@ export function apply(ctx: Context): void {
   // ---- Jira 配置：工程根 jira.config.json 优先，其次 ctx.settings ----
   // 工程文件只在本仓库开发时存在（已 gitignore）；settings 服务来自 base profile
   // （settings-file），二者都没有时 Jira 端点返回「未配置」错误，插件其余功能
-  // （ping / 事件推送）不受影响。
+  // （ping）不受影响。
   const projectConfig = loadProjectJiraConfig(logger)
   const settingsService = ctx.get('settings')
   let settingsJira: JiraSettings = {}
@@ -180,34 +199,12 @@ export function apply(ctx: Context): void {
     settingsJira = scope.get()
     scope.watch(() => { settingsJira = scope.get() })
   } else if (projectConfig === null) {
-    logger.warn('settings 服务不可用且无 jira.config.json，jira/issue-types 端点将返回未配置')
+    logger.warn('settings 服务不可用且无 jira.config.json，jira/todos 端点将返回未配置')
   }
   const resolveJiraSettings = (): JiraSettings => projectConfig ?? settingsJira
 
-  // ---- 宿主 → 客户端 的事件队列（长轮询）----
-  // 队列持有已 emit 但尚未被客户端取走的事件；waiters 记录当前挂起的长轮询请求。
-  // 语义是「广播」：一个事件被多个并发 poll（多标签页）各自看到。
-  const pending: PendingEvent[] = [] // 未取走的事件 { event, args }
-  const waiters: Array<{ resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }> = []
-
-  // 宿主主动推送一个事件。任何插件代码都能调用。
-  function emit(event: string, args: unknown[] = []): void {
-    pending.push({ event, args })
-    logger.info('emit:', event, ...args)
-    // 唤醒所有挂起的 poll：取一次快照，分发给每一个等待者（广播）。
-    if (waiters.length > 0) {
-      const snapshot = pending.splice(0)
-      while (waiters.length > 0) {
-        const w = waiters.shift()
-        if (w === undefined) break
-        clearTimeout(w.timer)
-        w.resolve(snapshot)
-      }
-    }
-  }
-
-  // 注册 /hello 通道：/hello/ping 请求-响应 + /hello/events/poll 长轮询 + /hello/jira/issue-types。
-  ctx.connection.rpc.handle('/hello', async (endpoint, payload, signal): Promise<ConnectionRpcResult<unknown>> => {
+  // 注册 /hello 通道：/hello/ping 请求-响应 + /hello/jira/todos 待办列表。
+  ctx.connection.rpc.handle('/hello', async (endpoint, payload): Promise<ConnectionRpcResult<unknown>> => {
     if (endpoint === 'ping') {
       const nameArg = (payload as { args?: { name?: unknown } } | undefined)?.args?.name
       const display = typeof nameArg === 'string' ? nameArg : '(anonymous)'
@@ -215,64 +212,21 @@ export function apply(ctx: Context): void {
       return { ok: true, value: `pong from host, hello ${display}!` }
     }
 
-    if (endpoint === 'jira/issue-types') {
+    if (endpoint === 'jira/todos') {
       try {
-        const types = await fetchJiraIssueTypes(resolveJiraSettings())
-        return { ok: true, value: types }
+        const todos = await fetchJiraTodos(resolveJiraSettings())
+        return { ok: true, value: todos }
       } catch (error) {
         if (error instanceof JiraConfigError) {
           return rpcFailure(error.code, error.message)
         }
-        logger.warn('jira/issue-types failed:', String(error))
-        return rpcFailure('jira-error', `读取 Jira Issue Type 失败：${String(error)}`)
+        logger.warn('jira/todos failed:', String(error))
+        return rpcFailure('jira-error', `读取 Jira 待办失败：${String(error)}`)
       }
-    }
-
-    if (endpoint === 'events/poll') {
-      // 已有事件 → 立即取走全部返回；没有 → 挂起等待，超时或新事件到达时返回。
-      if (pending.length > 0) {
-        return { ok: true, value: pending.splice(0) }
-      }
-      // 等待期间新事件到达：waiter.resolve(events) 由 emit 以广播方式调用。
-      // 超时：resolve(null) 表示本轮无事件。
-      // abort：从 waiters 移除并立即返回空数组，避免泄漏挂起连接。
-      const events = await new Promise<PendingEvent[] | null>((resolve) => {
-        let entry: { resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }
-        const timer = setTimeout(() => {
-          const index = waiters.indexOf(entry)
-          if (index !== -1) waiters.splice(index, 1)
-          resolve(null)
-        }, POLL_TIMEOUT_MS)
-        entry = {
-          resolve: (value) => {
-            clearTimeout(timer)
-            resolve(value)
-          },
-          timer,
-        }
-        waiters.push(entry)
-        signal.addEventListener('abort', () => {
-          const index = waiters.indexOf(entry)
-          if (index !== -1) waiters.splice(index, 1)
-          clearTimeout(timer)
-          resolve(null)
-        }, { once: true })
-      })
-      if (events === null) return { ok: true, value: [] }
-      return { ok: true, value: events }
     }
 
     return rpcFailure('bad-request', `unknown endpoint: ${endpoint}`)
   })
-
-  // 暴露 emit 给宿主端其他逻辑调用；这里示例：每 5 秒自动发一个事件，
-  // 证明「host 主动触发」不需要任何客户端请求。
-  ctx.effect(() => {
-    const timer = setInterval(() => {
-      emit('hello/notice', ['host is alive at ' + new Date().toLocaleTimeString()])
-    }, 5_000)
-    return () => clearInterval(timer)
-  })
 }
 
-export type { JiraIssueType, JiraSettings }
+export type { JiraTodo, JiraSettings }

@@ -2,6 +2,17 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — Jira 待办列表（替代类别条，移除长轮询）
+
+**类型**：功能 + 重构
+**涉及**：`src/host/index.ts`、`src/client/index.tsx`、`README.md`、`CLAUDE.md`、`docs/`
+**背景 / 问题**：此前展示的是「Issue Type 类别条」；需求改为只展示待办事项列表，类型以徽章内嵌在列表中。
+**改动**：
+- 宿主移除 `/hello/issue-types` 端点与长轮询事件队列（`pending`/`waiters`/`emit`/`events/poll`），新增 `/hello/jira/todos`：调 `GET {baseUrl}/rest/api/3/search/jql`（Basic Auth、10s 超时），JQL `assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC`，映射为 `{ key, summary, typeName, typeColor, typeIconUrl, statusName }`。
+- 客户端改为「我的待办」悬浮卡片：挂载自动加载，每项含类型徽章（图标或代表色圆点 + 类型名）+ 摘要 + `KEY · 状态`；移除事件气泡与长轮询循环；保留底部 ping 按钮（点击同时刷新待办）。
+- 中文 Issue Type 名加入颜色映射（故事/任务/缺陷/史诗/改进/子任务）。
+**验证**：`pnpm build` 通过；真实 Jira 实测 —— 初次调 `/rest/api/2/search` 返回 410，改 `/rest/api/3/search/jql` 后返回待办 `JYSXS-115`（类型「故事」→ `#16825d`）；无配置时返回 `jira-not-configured`。
+
 ## 2026-08-31 — Jira 配置支持放工程内（jira.config.json 优先）
 
 **类型**：功能
