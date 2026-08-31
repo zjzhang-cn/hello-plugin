@@ -222,8 +222,9 @@ function apply(ctx) {
 - [ ] `load({ id })` 的 id 与包名一致（图行 id）
 - [ ] 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`
 - [ ] Web 端右下角出现「我的待办」悬浮卡片
-- [ ] 点击按钮：宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host, hello browser!` 后恢复计数
-- [ ] 宿主每 5 秒（无需操作）按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...`（长轮询）
+- [ ] 点击 hello 按钮：宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host, hello browser!`，1 秒后恢复 `hello world x{n}`（计数 +1）
+- [ ] 宿主每 5 秒（无需操作）按钮上方出现新的气泡条 `hello/notice: host is alive at ...`（只保留最新一条），宿主日志追加 `emit: hello/notice ...`（长轮询）
+- [ ] 待办卡片头部「⟳」刷新按钮：点击后重新拉取列表
 - [ ] 配置 Jira 凭据后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时显示 `Jira: jira-not-configured`
 
 ---

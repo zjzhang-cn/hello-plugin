@@ -101,8 +101,8 @@ node --check lib/host.js            # 宿主 bundle 语法检查
 启动挂载本 bundle 的 dsh profile 验证：
 
 1. 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`。
-2. Web 端右下角出现「我的待办」悬浮卡片；点击底部按钮后宿主日志追加 `client ping: browser`，按钮显示 `pong from host`。
-3. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...` —— 长轮询推送链路打通。
+2. Web 端右下角出现「我的待办」悬浮卡片；点击底部 hello 按钮后宿主日志追加 `client ping: browser`，按钮短暂显示 `pong from host`，**1 秒后恢复 `hello world x{n}`（计数 +1）**。
+3. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`（**只保留最新一条**）—— 长轮询推送链路打通。
 4. 配置 Jira 凭据（工程根 `jira.config.json` 或 `$DSH_HOME/settings.yaml` 的 `jira:` 节）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时出现 `Jira: jira-not-configured` 提示条。
 
 ## 改动纪律

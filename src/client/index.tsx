@@ -29,6 +29,8 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [todosError, setTodosError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [events, setEvents] = React.useState<string[]>([])
+  const replyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clickSeqRef = React.useRef(0)
 
   const loadTodos = (): void => {
     if (loading) return
@@ -65,7 +67,7 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         inflight = false
         if (!cancelled && result.ok && Array.isArray(result.value)) {
           const incoming = (result.value as HelloEvent[]).map((item) => `${item.event}: ${item.args.join(' ')}`)
-          if (incoming.length > 0) setEvents((previousEvents) => [...incoming.reverse(), ...previousEvents].slice(0, 5))
+          if (incoming.length > 0) setEvents([incoming[incoming.length - 1] ?? ''])
         }
       } catch {
         inflight = false
@@ -80,15 +82,41 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
     return () => { cancelled = true }
   }, [connection])
 
+  // 清理上一次的恢复定时器，避免连续点击叠加。
+  const clearReplyTimer = (): void => {
+    if (replyTimerRef.current !== null) {
+      clearTimeout(replyTimerRef.current)
+      replyTimerRef.current = null
+    }
+  }
+
+  // 组件卸载时清理定时器。
+  React.useEffect(() => () => { clearReplyTimer() }, [])
+
   const onClick = (): void => {
-    setCount((currentCount) => currentCount + 1)
+    const seq = ++clickSeqRef.current
+    clearReplyTimer()
+    setReply('…')
     void connection.rpc
       .call('/hello', 'ping', { args: { name: 'browser' } })
       .then((result) => {
+        if (seq !== clickSeqRef.current) return // 已被更新的点击取代
         if (result.ok) setReply(String(result.value))
         else setReply(`error: ${result.error.code}: ${result.error.message}`)
       })
-      .catch((error: unknown) => setReply(`error: ${String(error)}`))
+      .catch((error: unknown) => {
+        if (seq !== clickSeqRef.current) return
+        setReply(`error: ${String(error)}`)
+      })
+      .finally(() => {
+        if (seq !== clickSeqRef.current) return // 只让最后一次点击生效
+        // host 回复 pong（或出错）后 1 秒恢复 hello 样式，次数 +1
+        replyTimerRef.current = setTimeout(() => {
+          setReply(null)
+          setCount((currentCount) => currentCount + 1)
+          replyTimerRef.current = null
+        }, 1_000)
+      })
     loadTodos()
   }
 
@@ -157,7 +185,17 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         borderBottom: '1px solid rgba(0,0,0,0.08)', display: 'flex',
         justifyContent: 'space-between', alignItems: 'center',
       },
-    }, '我的待办', loading ? '…' : todos !== null ? `(${todos.length})` : ''),
+    },
+    '我的待办', loading ? '…' : todos !== null ? `(${todos.length})` : '',
+    React.createElement('button', {
+      onClick: loadTodos,
+      title: '刷新待办',
+      style: {
+        border: 'none', background: 'transparent', cursor: 'pointer',
+        fontSize: '14px', lineHeight: '1', padding: '2px 4px',
+        color: '#6a7c99',
+      },
+    }, '⟳')),
     ...(todosError !== null
       ? [React.createElement('div', {
           key: 'jira-error',
