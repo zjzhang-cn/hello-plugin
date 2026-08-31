@@ -2,6 +2,14 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 工作区分组「新闻头条」，会话标题复原
+
+**类型**：功能
+**涉及**：`src/host/index.ts`、`README.md`、`docs/dev-log.md`
+**背景 / 问题**：用户希望 Web UI 里新闻会话按「新闻头条」工作区分组显示，而会话标题保持原样（「获取新闻 + 时间」）。
+**改动**：`inject` 增加 `workspaceRegistry`；`news/start` 中 `workspaceRegistry.create(cwd, '新闻头条')` 创建/复用工作区（`setTitle` 固定显示名）→ `attachSession(sessionId)` 把会话归入该工作区；会话标题从「新闻头条 <时间>」改回「获取新闻 <时间>」。
+**验证**：`pnpm typecheck` / `pnpm build` 通过；bundle 含工作区创建、attachSession 与会话标题逻辑。
+
 ## 2026-08-31 — 新闻会话分组名称改为「新闻头条」
 
 **类型**：功能
