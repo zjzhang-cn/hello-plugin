@@ -532,12 +532,12 @@ export function apply(ctx: Context): void {
           agentOptions: { provider: llmConfig.provider, model: llmConfig.model },
           setup: (agentCtx: Context) => { installGoogleNewsTool(agentCtx) },
         })
-        // 给会话命名：「获取新闻 <时间>」。rename 追加 session/title 事件，
+        // 给会话命名：「新闻头条 <时间>」。rename 追加 session/title 事件，
         // 固定标题并显示在会话列表。
         const now = new Date()
         const stamp = now.toLocaleTimeString('zh-CN', { hour12: false })
         ;(ctx as unknown as { sessionTitle: { rename(session: object, title: string): unknown } })
-          .sessionTitle.rename(handle.agent.session, `获取新闻 ${stamp}`)
+          .sessionTitle.rename(handle.agent.session, `新闻头条 ${stamp}`)
         handle.agent.followup(createUserMessage({
           content: [{
             type: 'text' as const,

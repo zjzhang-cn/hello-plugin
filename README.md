@@ -79,7 +79,7 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 点击悬浮区域独立的「📰 获取新闻」按钮（青色，与 hello 按钮并列），宿主会发起一个**新会话**，会话里的 Agent 通过工具获取最新 Google 新闻并总结 —— LLM 交互全过程都在这个新会话中，dsh Web UI 的会话列表会自动出现该会话，点开即可查看完整过程：
 
-- **宿主端点**：`/hello/news/start`（`{ args: {} }`）。`ctx.agents.create()` 创建新会话（sessionId `news-<uuid>`，agentOptions 取 `llm.config.json` 的 provider/model）→ `ctx.sessionTitle.rename()` 命名「获取新闻 <HH:mm:ss>」→ `setup` 中注册**作用域工具** `google_news` → `agent.followup()` 让 Agent 获取新闻并总结 → 立即返回 `{ sessionId }`（不等待完成，会话后台运行）。
+- **宿主端点**：`/hello/news/start`（`{ args: {} }`）。`ctx.agents.create()` 创建新会话（sessionId `news-<uuid>`，agentOptions 取 `llm.config.json` 的 provider/model）→ `ctx.sessionTitle.rename()` 命名「新闻头条 <HH:mm:ss>」→ `setup` 中注册**作用域工具** `google_news` → `agent.followup()` 让 Agent 获取新闻并总结 → 立即返回 `{ sessionId }`（不等待完成，会话后台运行）。
 - **google_news 工具**：`fetch('https://news.google.com/rss?hl=...')`（Node 全局 fetch）→ 正则解析 `<item>` 的标题/链接/发布时间，取前 15 条。工具通过 `ctx.tools.register` 从 agentCtx 注册（`ScopedLayers` 作用域机制），**仅该会话的 Agent 可见**，不污染全局工具表。
 - **会话可见性**：宿主创建会话自动触发 `api-session/added` Remote 事件，dsh Web UI 会话列表自动出现新会话（无需客户端刷新）；点开可见 user/message → google_news 工具调用（tool/call + tool/result 含新闻列表）→ assistant 总结的完整交互。
 - **客户端**：悬浮区域独立「📰 获取新闻」按钮（请求中显示「获取中…」）→ 调用 `news/start` → 按钮上方显示「✅ 已创建会话 <id>，在会话列表查看 Agent 总结」；失败显示红色错误条（如 `llm-not-configured`）。
@@ -110,6 +110,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 新闻会话分组名称改为「新闻头条」** — 会话标题前缀由「获取新闻」改为「新闻头条」（仍带时间戳）；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 新闻会话命名「获取新闻 + 时间」** — `news/start` 创建会话后经 `ctx.sessionTitle.rename` 命名「获取新闻 <HH:mm:ss>」，固定标题显示在会话列表；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 获取新闻入口独立为悬浮按钮** — 「📰 获取新闻」从待办卡片 header 移出，成为与 hello 按钮并列的独立按钮（青色），新闻提示条独立显示；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 修复 google_news 工具 schema 被模型 API 拒绝** — 工具 parameters 从简写改为完整 JSON Schema（`type: 'object'` + properties），否则模型 API 报 `type: null`；详见 [开发日志](docs/dev-log.md)。
