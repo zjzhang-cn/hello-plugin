@@ -2,6 +2,14 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 修复 google_news 工具 schema 被模型 API 拒绝
+
+**类型**：BUG 修复
+**涉及**：`src/host/index.ts`
+**背景 / 问题**：Agent 会话中调用 `google_news` 工具时报 `Invalid schema for function 'google_news': schema must be a JSON Schema of 'type: "object"', got 'type: null'`。
+**改动**：`parameters` 从简写 `{ locale: {...} }` 改为完整 JSON Schema `{ type: 'object', additionalProperties: false, properties: { locale: {...} } }`。根因：tool-web 等工具走 `defineTool`（内部 `parameterSchemaSpecToJsonSchema` 归一化），本插件直接 `tools.register` 传简写，模型 API 收到顶层无 type 的 schema 被拒。
+**验证**：`pnpm build` / `pnpm typecheck` 通过；bundle 中 parameters 为完整 object schema。
+
 ## 2026-08-31 — 客户端点击发起新会话：Agent 获取 Google 新闻并总结
 
 **类型**：功能

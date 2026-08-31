@@ -379,7 +379,15 @@ function installGoogleNewsTool(agentCtx: Context): void {
   ;(agentCtx as unknown as { tools: { register(definition: object): () => void } }).tools.register({
     name: 'google_news',
     description: '获取 Google News 最新新闻列表（标题 + 链接 + 发布时间）。用于了解当前热点新闻。',
-    parameters: { locale: { type: 'string', description: '语言地区，如 zh-CN 或 en-US' } },
+    // parameters 必须是完整 JSON Schema（顶层 type: 'object'）——
+    // 简写 { locale: {...} } 会被模型 API 拒绝（type: null）。
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        locale: { type: 'string', description: '语言地区，如 zh-CN 或 en-US' },
+      },
+    },
     output: {
       schema: {
         type: 'array',

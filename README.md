@@ -110,6 +110,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 修复 google_news 工具 schema 被模型 API 拒绝** — 工具 parameters 从简写改为完整 JSON Schema（`type: 'object'` + properties），否则模型 API 报 `type: null`；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端点击发起新会话：Agent 获取 Google 新闻并总结** — 待办卡片新增「📰」按钮 → 宿主 `ctx.agents.create` 发起新会话（`news-<uuid>`），setup 中注册作用域工具 `google_news`（抓取 Google News RSS）→ Agent 获取最新新闻并总结；新会话自动出现在 Web UI 会话列表（api-session/added），可查看完整 LLM 交互；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 LLM 分析与评论** — 点击待办项 → host 取 issue 详情（ADF 转文本）→ `ctx.llm.stream` 生成分析 → 客户端卡片内确认 → 同意则 ADF 格式写回 Jira 评论；LLM 配置走工程根 `llm.config.json`（provider/model，可配置），dsh-llm 改为 external 运行时依赖；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端交互优化** — 长轮询气泡只保留最新一条；「我的待办」头部新增 ⟳ 刷新按钮；hello 按钮 ping 后 1 秒恢复 `hello world x{n}` 并计数 +1；详见 [开发日志](docs/dev-log.md)。
