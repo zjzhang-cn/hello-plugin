@@ -2,6 +2,17 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 恢复长轮询与 ping（学习项目：只增不删）
+
+**类型**：重构
+**涉及**：`src/host/index.ts`、`src/client/index.tsx`、`README.md`、`CLAUDE.md`、`docs/learning-path.md`、`docs/plugin-dev-handbook.md`
+**背景 / 问题**：上一轮「待办列表」改动误删了长轮询事件推送；本仓库是学习项目，除非明确要求否则只添加不删除。应恢复长轮询与 ping，与待办列表共存。
+**改动**：
+- 宿主恢复 `PendingEvent` 类型、`pending` 队列 + `waiters` 挂起表、`emit()` 广播唤醒、`/hello/events/poll` 端点（15s 超时 / abort 清理）、每 5 秒 `hello/notice` 定时推送。
+- 客户端恢复 `events` state、长轮询循环（`inflight` await 后复位）、按钮上方事件气泡条。
+- 恢复 README / CLAUDE.md 的长轮询章节与验证步骤、learning-path 第 5 章原文、handbook 验证清单长轮询项。
+**验证**：`pnpm build` + `node --check` 通过；冒烟测试 —— ping / jira/todos（真实 Jira 返回 1 条）/ events/poll（挂起 5s 后被 `hello/notice` 唤醒）三端点全部正常。
+
 ## 2026-08-31 — Jira 待办列表（替代类别条，移除长轮询）
 
 **类型**：功能 + 重构

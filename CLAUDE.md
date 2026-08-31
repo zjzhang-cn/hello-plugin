@@ -50,10 +50,20 @@ docs/
 
 > 两个半区都已是 TypeScript：`tsconfig.host.json`（node 类型）+ `tsconfig.client.json`（DOM 类型），共用一份 `tsdown.config.ts`（数组配置：host → node ESM，client → ModuleLoader 工厂）。宿主 bundle 只内联 schemastery（运行时构建设置 schema），其余依赖均为 type-only，被擦除后产物无运行时裸 import，可直接以绝对路径加载。
 
-## 通信机制（客户端 → 宿主：Unary RPC）
+## 通信机制（本仓库实现的两条链路）
+
+### 客户端 → 宿主：Unary RPC
 
 - 宿主：`inject: ['connection']`，`ctx.connection.rpc.handle('/hello', handler)`。handler 收 `(endpoint, payload, signal)`，返回 `{ ok: true, value }` 或 `{ ok: false, error: { code, message, details } }`。
 - 客户端：`inject: ['connection']`，`ctx.connection.rpc.call('/hello', 'ping' | 'jira/todos', { args })` → `Promise<{ ok, value } | { ok, error }>`。payload 信封必须是 `{ args: {...} }`。
+
+### 宿主 → 客户端：长轮询
+
+dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`registerRemoteEvents` 是**单例**（api-remotes 占用），事件名必须在 `API_REMOTE_FORWARDED_EVENTS` allowlist。因此本仓库用长轮询复用 `/hello` 通道：
+
+- 宿主维护 `pending` 队列 + `waiters` 挂起表；`emit(event, args)` 入队并唤醒所有 waiter（**广播语义**：一次快照分发给所有 waiter，不是单消费者）。
+- `/hello/events/poll` 端点：有事件立即返回全部；无事件挂起等待（15 秒超时返回空数组）；abort 清理等待者。
+- 客户端挂载后跑长轮询循环，常驻一个 poll 连接；收到空数组立刻发下一次；失败退避重试。
 
 ### 外部数据：Jira 待办列表
 
@@ -64,8 +74,10 @@ docs/
 ### 关键约束（踩过的坑）
 
 1. `/api` 共享通道只允许一个 interceptor（api-gateway 独占）→ 自定义通道另开如 `/hello`。
-2. Jira Cloud `/rest/api/2/search` 已移除（410），须用 `/rest/api/3/search/jql`。
-3. 浏览器端 `rpc.open`（流式）只在 worker 隧道存在，served web app 的自建通道是请求-响应。
+2. `typertGateway.registerRemoteEvents` 是单例 → 自定义事件用长轮询。
+3. 客户端长轮询循环里 **`inflight` 必须在 await 后复位**，否则循环只跑一轮就停（曾因此 bug）。
+4. 浏览器端 `rpc.open`（流式）只在 worker 隧道存在，served web app 的自建通道是请求-响应。
+5. Jira Cloud `/rest/api/2/search` 已移除（410），须用 `/rest/api/3/search/jql`。
 
 ## UI 插槽（客户端）
 
@@ -90,7 +102,8 @@ node --check lib/host.js            # 宿主 bundle 语法检查
 
 1. 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`。
 2. Web 端右下角出现「我的待办」悬浮卡片；点击底部按钮后宿主日志追加 `client ping: browser`，按钮显示 `pong from host`。
-3. 配置 Jira 凭据（工程根 `jira.config.json` 或 `$DSH_HOME/settings.yaml` 的 `jira:` 节）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时出现 `Jira: jira-not-configured` 提示条。
+3. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...` —— 长轮询推送链路打通。
+4. 配置 Jira 凭据（工程根 `jira.config.json` 或 `$DSH_HOME/settings.yaml` 的 `jira:` 节）后，卡片展示「我的待办」列表（每项含类型徽章 + 摘要 + `KEY · 状态`）；未配置时出现 `Jira: jira-not-configured` 提示条。
 
 ## 改动纪律
 

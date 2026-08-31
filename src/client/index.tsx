@@ -4,6 +4,11 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 
+interface HelloEvent {
+  event: string
+  args: unknown[]
+}
+
 interface JiraTodo {
   key: string
   summary: string
@@ -23,6 +28,7 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [todos, setTodos] = React.useState<JiraTodo[] | null>(null)
   const [todosError, setTodosError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
+  const [events, setEvents] = React.useState<string[]>([])
 
   const loadTodos = (): void => {
     if (loading) return
@@ -45,6 +51,33 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   React.useEffect(() => {
     loadTodos()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection])
+
+  // 长轮询：常驻一个 poll 连接接收宿主推送的事件，渲染为按钮上方气泡条。
+  React.useEffect(() => {
+    let cancelled = false
+    let inflight = false
+    async function poll(): Promise<void> {
+      if (cancelled || inflight) return
+      inflight = true
+      try {
+        const result = await connection.rpc.call('/hello', 'events/poll', { args: {} })
+        inflight = false
+        if (!cancelled && result.ok && Array.isArray(result.value)) {
+          const incoming = (result.value as HelloEvent[]).map((item) => `${item.event}: ${item.args.join(' ')}`)
+          if (incoming.length > 0) setEvents((previousEvents) => [...incoming.reverse(), ...previousEvents].slice(0, 5))
+        }
+      } catch {
+        inflight = false
+        if (!cancelled) {
+          setTimeout(poll, 3_000)
+          return
+        }
+      }
+      if (!cancelled) void poll()
+    }
+    void poll()
+    return () => { cancelled = true }
   }, [connection])
 
   const onClick = (): void => {
@@ -142,6 +175,14 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         }, '没有待办事项 🎉')]
       : []),
     ...(todos !== null ? todoList : [])),
+    ...events.map((text, index) => React.createElement('div', {
+      key: text + index,
+      style: {
+        background: index === 0 ? 'rgba(79,124,255,0.12)' : 'rgba(0,0,0,0.06)',
+        border: '1px solid rgba(79,124,255,0.35)', borderRadius: '8px', padding: '6px 10px',
+        fontSize: '12px', color: index === 0 ? '#4f7cff' : '#6a7c99', maxWidth: '260px',
+      },
+    }, text)),
     React.createElement('button', {
       onClick,
       style: {
