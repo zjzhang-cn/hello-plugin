@@ -10,6 +10,7 @@
 | `src/client/index.tsx` | 客户端 TypeScript 源码：注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主，同时以长轮询方式接收宿主推送的事件 |
 | `lib/client.js` | 由 `pnpm build` 生成的浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
+| `.vscode/launch.json` | VS Code 调试配置：在 deepseek-harness 中以本地 `dev.patch.yml` 启动 dsh Web |
 | `package.json` | 包清单，声明两个半区的导出与 dsh 集成字段 |
 | `docs/dev-log.md` | 开发日志：每次功能 / BUG 修改 / 实现的记录（最新在上） |
 | `docs/learning-path.md` | 学习路径：按章节由简入深的学习路线 |
@@ -46,8 +47,20 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 长轮询核心逻辑已用独立脚本验证（5 场景：等待中唤醒、多 waiter 广播、超时、abort、已有事件立即返回）。
 
+## 本机 Chrome 调试远端客户端
+
+当 VS Code 通过 Remote-SSH 连接远端主机时，DSH 服务与源码在远端，而 Chrome 在本机。先用 `DSH Web（hello-plugin patch）` 启动远端服务；再通过 VS Code 的「端口」视图将远端 `3080` 转发到本机，或在本机执行：
+
+```sh
+ssh -L 3080:127.0.0.1:3080 <remote-host>
+```
+
+在本机 Chrome 打开 `http://127.0.0.1:3080`，按 `F12` 打开 DevTools，在「Sources」中搜索 `index.tsx` 并设置断点。`pnpm build` 生成的 `lib/client.js.map` 会将该 bundle 映射回 `src/client/index.tsx`；修改客户端后需重新执行 `pnpm build` 并刷新页面。
+
 ## 开发日志
 
+- **2026-08-31 支持本机 Chrome 调试远端客户端 TSX** — bundle source map 直接映射到 TSX，并记录 Remote-SSH 下通过端口转发使用本机 DevTools 的流程；详见 [开发日志](docs/dev-log.md)。
+- **2026-08-31 增加 DeepSeek Harness Web 调试启动项** — 新增 VS Code 配置，在 `deepseek-harness` 中以 `dev.patch.yml` 运行 `pnpm dsh web`；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端迁移为 TypeScript 并提供浏览器构建** — 新增 `tsc` + `tsdown` 构建，将客户端产物改为 `lib/client.js`；详见 [开发日志](docs/dev-log.md)。
 
 完整记录见 [docs/dev-log.md](docs/dev-log.md)（每次功能 / BUG 修改 / 实现一条，最新在上）。此处为简述（最新在上）：

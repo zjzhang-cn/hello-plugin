@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: { client: 'lib/client/index.js' },
+  entry: { client: 'src/client/index.tsx' },
   outDir: 'lib',
   format: 'cjs',
   platform: 'browser',

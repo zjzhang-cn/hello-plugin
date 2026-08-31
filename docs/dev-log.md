@@ -2,6 +2,22 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 支持本机 Chrome 调试远端客户端 TSX
+
+**类型**：功能
+**涉及**：`tsconfig.client.json`、`tsdown.config.ts`、`README.md`
+**背景 / 问题**：在 Remote-SSH 中 DSH 服务运行于远端、Chrome 运行于本机；最终 bundle 的 source map 原本只映射到中间 JS，无法在本机 Chrome DevTools 命中 `src/client/index.tsx`。
+**改动**：启用 TypeScript source map，并让 tsdown 直接从 TSX 源码打包，使最终 bundle 映射到 `src/client/index.tsx`；README 记录通过 VS Code 端口转发后使用本机 Chrome DevTools 的调试流程。
+**验证**：`pnpm build` 通过；`lib/client.js.map` 的 sources 包含 `../src/client/index.tsx`。
+
+## 2026-08-31 — 增加 DeepSeek Harness Web 调试启动项
+
+**类型**：功能
+**涉及**：`.vscode/launch.json`、`README.md`
+**背景 / 问题**：调试插件时需要手动切换到 `deepseek-harness` 工作目录并输入带本地 patch 的 dsh Web 启动命令。
+**改动**：新增 `DSH Web（hello-plugin patch）` 启动配置；以 `/home/gehc/work/dsh/deepseek-harness` 为工作目录运行 `pnpm dsh web --patch ../hello-plugin/dev.patch.yml`，并自动附加子进程调试器。
+**验证**：VS Code 对 `.vscode/launch.json` 的配置诊断通过。
+
 ## 2026-08-31 — 客户端迁移为 TypeScript 并提供浏览器构建
 
 **类型**：重构
