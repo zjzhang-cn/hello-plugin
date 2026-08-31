@@ -1,39 +1,16 @@
 import * as React from 'react'
-
-interface RpcSuccess {
-  ok: true
-  value: unknown
-}
-
-interface RpcFailure {
-  ok: false
-  error: { code: string, message: string }
-}
+import type { Context } from '@deepseek-ai/cordis'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 
 interface HelloEvent {
   event: string
   args: unknown[]
 }
 
-interface Connection {
-  rpc: {
-    call(namespace: string, endpoint: string, payload: { args: Record<string, string> }): Promise<RpcSuccess | RpcFailure>
-  }
-}
-
-interface Slots {
-  inject(name: string, callback: () => unknown): unknown
-  register(definition: { name: string, id: string, inject: () => { connection: Connection } }, component: React.ComponentType<HelloPillProps>): unknown
-}
-
-interface ClientContext {
-  slots: Slots
-  connection: Connection
-  effect(callback: () => unknown): unknown
-}
-
 interface HelloPillProps {
-  connection: Connection
+  connection: ConnectionHandle
 }
 
 function HelloPill({ connection }: HelloPillProps): React.ReactElement {
@@ -107,9 +84,10 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
 
 export const inject = ['slots', 'connection']
 
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
+  const connection = ctx.get('connection') as ConnectionHandle
   ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register(
-    { name: 'shell.overlay', id: 'hello-pill', inject: () => ({ connection: ctx.connection }) },
+    { name: 'shell.overlay', id: 'hello-pill', inject: () => ({ connection }) },
     HelloPill,
   )))
 }
