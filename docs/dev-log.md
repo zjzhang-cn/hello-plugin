@@ -2,6 +2,14 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 新闻会话命名「获取新闻 + 时间」
+
+**类型**：功能
+**涉及**：`src/host/index.ts`、`README.md`、`docs/dev-log.md`
+**背景 / 问题**：新闻会话在会话列表中无明确标题，需要一眼可辨。
+**改动**：`inject` 增加 `sessionTitle`；`news/start` 创建会话后调用 `ctx.sessionTitle.rename(session, '获取新闻 <HH:mm:ss>')`（追加 `session/title` 事件，固定标题并显示在会话列表）。类型经断言访问（session-title 模块扩展未引入插件编译面）。
+**验证**：`pnpm typecheck` / `pnpm build` 通过；bundle 含会话标题逻辑。
+
 ## 2026-08-31 — 获取新闻入口从待办卡片独立为悬浮按钮
 
 **类型**：功能
