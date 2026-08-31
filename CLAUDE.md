@@ -7,11 +7,13 @@ dsh-hello-plugin 是 dsh（DeepSeek Harness，全插件化 Cordis agent 框架�
 ## 仓库布局
 
 ```
-host.js                  宿主半区：Node 端 Cordis 插件入口，注册 /hello RPC 通道与事件队列
-src/client/index.tsx     客户端半区 TypeScript 源码：悬浮按钮 + 长轮询收事件
+src/host/index.ts        宿主半区 TypeScript 源码：注册 /hello RPC 通道、事件队列、读取 Jira Issue Type
+src/client/index.tsx     客户端半区 TypeScript 源码：悬浮按钮 + 长轮询收事件 + Jira 类别条
+lib/host.js              由 pnpm build 生成的宿主半区 bundle（Node ESM，单文件无运行时依赖）
 lib/client.js            由 pnpm build 生成的客户端浏览器 bundle
+tsconfig.host.json       宿主半区 TypeScript 编译配置
 tsconfig.client.json     客户端 TypeScript 编译配置
-tsdown.config.ts         将编译结果封装为 ModuleLoader 工厂的 bundle 配置
+tsdown.config.ts         双半区 bundle 配置（host: node ESM；client: ModuleLoader 工厂）
 cordis.patch.yml         bundle patch 层：把宿主插件行插入启动图（正式：包名引用）
 dev.patch.yml            开发用 patch（绝对路径，已 gitignore）
 package.json             包清单：exports 两个半区 + dsh 集成字段
@@ -41,9 +43,11 @@ docs/
 
 同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理。深入理解见 [docs/plugin-dev-handbook.md](docs/plugin-dev-handbook.md)，能力全目录见 [docs/plugin-capability-catalog.md](docs/plugin-capability-catalog.md)。
 
-- **宿主半区**：`package.json` 的 `exports["."]` → `host.js`。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。导出 `name` + `apply(ctx)`。
+- **宿主半区**：`package.json` 的 `exports["."]` → `lib/host.js`。`src/host/index.ts` 经 `pnpm build` 编译为单文件 Node ESM。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。导出 `name` + `apply(ctx)`。
 - **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`src/client/index.tsx` 经 `pnpm build` 编译和封装；浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。客户端半区**不写进** patch —— 由扫描发现。
+
+> 两个半区都已是 TypeScript：`tsconfig.host.json`（node 类型）+ `tsconfig.client.json`（DOM 类型），共用一份 `tsdown.config.ts`（数组配置：host → node ESM，client → ModuleLoader 工厂）。宿主 bundle 只内联 schemastery（运行时构建设置 schema），其余依赖均为 type-only，被擦除后产物无运行时裸 import，可直接以绝对路径加载。
 
 ## 通信机制（本仓库实现的两条链路）
 
@@ -59,6 +63,12 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
 - 宿主维护 `pending` 队列 + `waiters` 挂起表；`emit(event, args)` 入队并唤醒所有 waiter（**广播语义**：一次快照分发给所有 waiter，不是单消费者）。
 - `/hello/events/poll` 端点：有事件立即返回全部；无事件挂起等待（15 秒超时返回空数组）；abort 清理等待者。
 - 客户端挂载后跑长轮询循环，常驻一个 poll 连接；收到空数组立刻发下一次；失败退避重试。
+
+### 外部数据：Jira Issue Type 读取
+
+- **配置**：`ctx.settings` 注册 `jira` namespace（`baseUrl` / `email` / `apiToken`），由 base profile 的 settings-file 提供（`$DSH_HOME/settings.yaml`）。settings 服务非必需 —— 拿不到时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`。
+- **端点**：`/hello/jira/issue-types`。调用 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth），把每个 Issue Type 映射为 `{ id, name, color, iconUrl }`（颜色按名称匹配常见 Jira 类型，否则从色板确定性取值；相对图标路径拼 baseUrl）。
+- **客户端**：点击 `HelloPill` 时同时拉取，类别条渲染在按钮上方（每项：图标或代表色圆点 + 名称）；失败显示 `jira-error` 提示条。
 
 ### 关键约束（踩过的坑）
 
@@ -82,8 +92,8 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
 ## 开发与验证
 
 ```sh
-pnpm build                         # TypeScript 检查并生成 lib/client.js
-node --check host.js                # 宿主脚本语法检查
+pnpm build                         # TypeScript 检查并生成 lib/host.js 与 lib/client.js
+node --check lib/host.js            # 宿主 bundle 语法检查
 ```
 
 启动挂载本 bundle 的 dsh profile 验证：
@@ -91,6 +101,7 @@ node --check host.js                # 宿主脚本语法检查
 1. 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`。
 2. Web 端右下角出现悬浮按钮；点击后宿主日志追加 `client ping: browser`，按钮显示 `pong from host`。
 3. 宿主每 5 秒 emit 一次 `hello/notice`（setInterval），客户端按钮上方应持续出现新的气泡条（每次带新的时间戳）—— 若气泡只出现一次就不再更新，检查 `src/client/index.tsx` 的 poll 循环 `inflight` 是否复位。
+4. 在 `$DSH_HOME/settings.yaml` 配置 `jira:`（`baseUrl` / `email` / `apiToken`）后点击按钮，按钮上方出现 Jira Issue Type 类别条；未配置时出现 `Jira: jira-not-configured` 提示条。
 
 ## 改动纪律
 

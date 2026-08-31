@@ -9,6 +9,13 @@ interface HelloEvent {
   args: unknown[]
 }
 
+interface JiraIssueType {
+  id: string
+  name: string
+  color: string
+  iconUrl: string
+}
+
 interface HelloPillProps {
   connection: ConnectionHandle
 }
@@ -17,6 +24,8 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [count, setCount] = React.useState(0)
   const [reply, setReply] = React.useState<string | null>(null)
   const [events, setEvents] = React.useState<string[]>([])
+  const [issueTypes, setIssueTypes] = React.useState<JiraIssueType[] | null>(null)
+  const [issueTypesError, setIssueTypesError] = React.useState<string | null>(null)
 
   const onClick = (): void => {
     setCount((currentCount) => currentCount + 1)
@@ -27,6 +36,21 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         else setReply(`error: ${result.error.code}: ${result.error.message}`)
       })
       .catch((error: unknown) => setReply(`error: ${String(error)}`))
+    void loadIssueTypes()
+  }
+
+  const loadIssueTypes = (): void => {
+    setIssueTypesError(null)
+    void connection.rpc
+      .call('/hello', 'jira/issue-types', { args: {} })
+      .then((result) => {
+        if (result.ok) {
+          setIssueTypes(result.value as JiraIssueType[])
+        } else {
+          setIssueTypesError(`${result.error.code}: ${result.error.message}`)
+        }
+      })
+      .catch((error: unknown) => setIssueTypesError(String(error)))
   }
 
   React.useEffect(() => {
@@ -72,6 +96,48 @@ function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         fontSize: '12px', color: index === 0 ? '#4f7cff' : '#6a7c99', maxWidth: '260px',
       },
     }, text)),
+    ...(issueTypesError !== null
+      ? [React.createElement('div', {
+          key: 'jira-error',
+          style: {
+            background: 'rgba(214,69,64,0.1)', border: '1px solid rgba(214,69,64,0.35)',
+            borderRadius: '8px', padding: '6px 10px', fontSize: '12px',
+            color: '#d64540', maxWidth: '260px', textAlign: 'right',
+          },
+        }, `Jira: ${issueTypesError}`)]
+      : []),
+    ...(issueTypes !== null
+      ? [React.createElement('div', {
+          key: 'jira-types',
+          style: {
+            display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end',
+            gap: '6px', maxWidth: '280px',
+          },
+        },
+        ...issueTypes.map((issueType) => React.createElement('div', {
+          key: issueType.id,
+          title: issueType.name,
+          style: {
+            display: 'flex', alignItems: 'center', gap: '5px',
+            background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.12)',
+            borderRadius: '999px', padding: '3px 9px', fontSize: '12px',
+            color: '#334155',
+          },
+        },
+        issueType.iconUrl !== ''
+          ? React.createElement('img', {
+              src: issueType.iconUrl,
+              alt: '',
+              style: { width: '14px', height: '14px', objectFit: 'contain' },
+            })
+          : React.createElement('span', {
+              style: {
+                width: '10px', height: '10px', borderRadius: '50%',
+                background: issueType.color, flexShrink: 0,
+              },
+            }),
+        issueType.name)))]
+      : []),
     React.createElement('button', {
       onClick,
       style: {

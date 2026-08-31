@@ -2,6 +2,17 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-08-31 — 宿主半区迁移为 TypeScript 并新增读取 Jira Issue Type
+
+**类型**：功能 + 重构
+**涉及**：`src/host/index.ts`（新增）、`tsconfig.host.json`（新增）、`tsdown.config.ts`、`package.json`、`dev.patch.yml`、`src/client/index.tsx`、`README.md`、`CLAUDE.md`、`docs/plugin-dev-handbook.md`、`docs/learning-path.md`
+**背景 / 问题**：宿主半区仍是手写 `host.js`（无类型检查）；需要为插件增加读取 Jira 类别（Issue Type）的能力 —— host 侧调 Jira API 读取、client 侧展示。
+**改动**：
+- **宿主 TS 化**：`host.js` 迁为 `src/host/index.ts`；新增 `tsconfig.host.json`（node 类型）；`tsdown.config.ts` 改为数组配置（host → node ESM 单文件 `lib/host.js`，schemastery 内联、其余依赖 type-only 擦除；client 维持 ModuleLoader 工厂）；`package.json` `exports["."]` 指向 `lib/host.js`；`dev.patch.yml` 指向 `lib/host.js`。
+- **Jira 读取**：宿主经 `ctx.settings` 注册 `jira` namespace（`baseUrl`/`email`/`apiToken`，settings 服务非必需、拿不到照常加载）；新增 `/hello/jira/issue-types` 端点调 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth、10 秒超时），映射为 `{ id, name, color, iconUrl }`（颜色按名称匹配常见类型，其余确定性 hash 取色；相对图标路径拼 baseUrl）；未配置返回 `jira-not-configured`，失败返回 `jira-error`。
+- **客户端展示**：点击 `HelloPill` 同时拉取 issue types，类别条渲染在按钮上方（图标或代表色圆点 + 名称）；失败显示红色错误条。
+**验证**：`pnpm build` 通过；`node --check lib/host.js lib/client.js` 通过；冒烟测试 mock ctx —— 未配置时返回 `jira-not-configured`、ping/未知端点正常；mock settings + mock fetch —— Basic Auth 头、颜色映射、相对图标拼接全部断言通过。
+
 ## 2026-08-31 — 支持本机 Chrome 调试远端客户端 TSX
 
 **类型**：功能

@@ -16,7 +16,7 @@
 ### 第 1 章 认识 dsh 插件长什么样
 
 - **学什么**：dsh 插件 = Cordis 插件；一个包同时提供「宿主半区 + 客户端半区」。
-- **读什么**：开发手册 [01 认识这个仓库](plugin-dev-handbook.md#01-认识这个仓库)、[02 双面插件如何接线](plugin-dev-handbook.md#02-双面插件如何接线)；仓库 `host.js`、`client.js`、`package.json`、`cordis.patch.yml`。
+- **读什么**：开发手册 [01 认识这个仓库](plugin-dev-handbook.md#01-认识这个仓库)、[02 双面插件如何接线](plugin-dev-handbook.md#02-双面插件如何接线)；仓库 `src/host/index.ts`、`src/client/index.tsx`、`package.json`、`cordis.patch.yml`。
 - **动手做**：通读四个文件，回答——宿主半区从哪个 export 进启动图？客户端半区怎么被发现？patch 层是干嘛的？
 - **产出**：能在脑内画出「一个包 → 两个进程（Node + 浏览器）→ 一份 Loader」的草图。
 
@@ -24,7 +24,7 @@
 
 - **学什么**：`name` + `apply(ctx)`、`inject` 依赖注入、`ctx.effect` 生命周期、`ctx.on/emit` 事件、`ctx.logger`。
 - **读什么**：能力清单 [01 Cordis 内核能力](plugin-capability-catalog.md#一cordis-内核能力所有插件的基础)；harness `docs/cordis-primer.md`、`vendor/cordis`。
-- **动手做**：在 `host.js` 的 `apply` 里加 `ctx.on('some/event', ...)` 与 `ctx.logger`，观察加载日志。
+- **动手做**：在 `src/host/index.ts` 的 `apply` 里加 `ctx.on('some/event', ...)` 与 `ctx.logger`，观察加载日志。
 - **产出**：理解为什么「一切注册都要包进 `ctx.effect()`」。
 
 ---
@@ -35,7 +35,7 @@
 
 - **学什么**：`connection` 服务；`rpc.call` / `rpc.handle`；信封 `{ args }`、结果 `{ ok, value } | { ok, error }`；为什么不能碰 `/api`。
 - **读什么**：开发手册 [03.2-03.3](plugin-dev-handbook.md#032-定位通信机制client-connection-包)、规范 [C 客户端 → 宿主 RPC](plugin-dev-handbook.md#c-客户端--宿主-rpc)；能力清单 [04 双向通信通道](plugin-capability-catalog.md#四双向通信通道)；源码 `packages/client/connection/src/rpc.ts`、`rpc-host.ts`、`client/rpc.ts`。
-- **动手做**：改 `host.js` 加一个新端点（如 `hello/greet`），`client.js` 按钮调用它并显示返回值。
+- **动手做**：改 `src/host/index.ts` 加一个新端点（如 `hello/greet`），`src/client/index.tsx` 按钮调用它并显示返回值。
 - **产出**：按钮点击 → 宿主日志 → 返回值上屏，链路亲手打通。
 
 ### 第 4 章 组件怎么拿到服务：inject 业务面
@@ -49,7 +49,7 @@
 
 - **学什么**：标准事件转发（`ctx.remote.$on`）为什么对自定义事件不适用；长轮询三个要点（广播、超时、abort 清理）。
 - **读什么**：开发手册 [03.9 宿主主动推送](plugin-dev-handbook.md#039-第二步宿主主动推送事件到客户端)、规范 [E 宿主 → 客户端事件推送](plugin-dev-handbook.md#e-宿主--客户端事件推送)；源码 `packages/api/remotes/src/remote-events.ts`（allowlist）。
-- **动手做**：改 `host.js` 的 `emit` 内容或频率，观察客户端气泡更新；故意去掉客户端 `inflight` 复位，看循环停在哪。
+- **动手做**：改 `src/host/index.ts` 的 `emit` 内容或频率，观察客户端气泡更新；故意去掉客户端 `inflight` 复位，看循环停在哪。
 - **产出**：理解为什么 hello-plugin 用长轮询而非标准事件；能解释广播语义。
 
 ### 第 6 章 通信机制对照

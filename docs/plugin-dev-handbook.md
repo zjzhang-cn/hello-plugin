@@ -14,8 +14,8 @@
 
 | 文件 | 角色 | 职责 |
 | --- | --- | --- |
-| `host.js` | 宿主半区 | Node 端 Cordis 插件入口，`name` + `apply(ctx)`；注册 `/hello` RPC 通道 |
-| `client.js` | 客户端半区 | 浏览器 bundle，右下角悬浮按钮；点击经 RPC 调宿主 |
+| `src/host/index.ts` | 宿主半区源码 | Node 端 Cordis 插件入口，`name` + `apply(ctx)`；注册 `/hello` RPC 通道（构建产物 `lib/host.js`） |
+| `src/client/index.tsx` | 客户端半区源码 | 右下角悬浮按钮；点击经 RPC 调宿主（构建产物 `lib/client.js`） |
 | `cordis.patch.yml` | patch 层 | 把宿主插件行插入启动图（boot graph）的插件列表 |
 | `package.json` | 包清单 | 声明两个半区的导出与 dsh 集成字段 |
 
@@ -25,7 +25,7 @@
 
 同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理。关键在「线缆」：浏览器和宿主之间隔着 HTTP，消息要过一层 RPC 信封。
 
-- **宿主半区**：`exports["."]` → host.js。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里跑。
+- **宿主半区**：`exports["."]` → `lib/host.js`（源码 `src/host/index.ts`）。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里跑。
 - **客户端半区**：`exports["./client"]` + `dsh.client.platform=web`。由 dsh-client-modules 扫描发现，浏览器端通过 `window.__ModuleLoader__.load` 注册。
 - **线缆 connection**：浏览器↔宿主之间，客户端 `ctx.connection.rpc.call`，宿主 `ctx.connection.rpc.handle`，共用一套 RPC 信封。
 
@@ -118,7 +118,7 @@ function apply(ctx) {
 
 ### 03.8 验证
 
-`node --check host.js client.js` 通过；注册 id 与包名一致。链路结论：点击按钮 → 客户端 `rpc.call` → 宿主 `/hello` handler → 宿主日志输出 `client ping: browser` → 按钮显示 `pong from host`。
+`pnpm build` 通过，`node --check lib/host.js lib/client.js` 通过；注册 id 与包名一致。链路结论：点击按钮 → 客户端 `rpc.call` → 宿主 `/hello` handler → 宿主日志输出 `client ping: browser` → 按钮显示 `pong from host`。
 
 ## 03.9 第二步：宿主主动推送事件到客户端
 
@@ -218,7 +218,7 @@ function apply(ctx) {
 
 改完插件后按此逐项过一遍。前两项是静态检查，后三项要起一个挂了本 bundle 的 dsh profile 实测。
 
-- [ ] 语法检查通过：`node --check host.js client.js`
+- [ ] 构建与语法检查通过：`pnpm build` + `node --check lib/host.js lib/client.js`
 - [ ] `load({ id })` 的 id 与包名一致（图行 id）
 - [ ] 宿主日志出现 `hello-plugin/host.js loaded` 与 `host loaded`
 - [ ] Web 端右下角出现「👋 hello world」悬浮按钮

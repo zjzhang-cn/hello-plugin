@@ -1,0 +1,236 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type { HostConnectionHandle, ConnectionRpcResult } from '@deepseek-ai/dsh-client-connection'
+import z from '@deepseek-ai/schemastery'
+
+// ---- 类型定义 ----
+
+interface PendingEvent {
+  event: string
+  args: unknown[]
+}
+
+interface JiraSettings {
+  baseUrl?: string | undefined
+  email?: string | undefined
+  apiToken?: string | undefined
+}
+
+interface JiraIssueType {
+  id: string
+  name: string
+  color: string
+  iconUrl: string
+}
+
+// ---- 常量 ----
+
+export const name = 'dsh-hello-plugin'
+
+// 依赖 connection 服务（宿主端由 client-connection 提供），用它注册 RPC 通道，
+// 供浏览器客户端通过 ctx.connection.rpc.call 调用。settings 服务由 base profile
+// 的 settings-file 提供，这里用 ctx.get 可选获取（拿不到也能加载插件）。
+export const inject = ['connection']
+
+// 长轮询超时：客户端挂起一个 poll 请求，宿主在超时内等不到新事件就返回空数组。
+// 客户端收到空数组后立即发起下一次 poll —— 有事件时近乎实时，无事件时只挂一个请求。
+const POLL_TIMEOUT_MS = 15_000
+
+// Jira 常见 Issue Type 的代表色（按名称精确匹配）；其余按名称 hash 从色板取色。
+const ISSUE_TYPE_COLORS: Readonly<Record<string, string>> = {
+  Bug: '#d04437',
+  'Bug (Defect)': '#d04437',
+  Task: '#3572b0',
+  Story: '#16825d',
+  Epic: '#7a3e9d',
+  Improvement: '#1d8b8b',
+  'Sub-task': '#8c9bac',
+  SubTask: '#8c9bac',
+}
+
+const FALLBACK_COLORS: readonly string[] = [
+  '#5a67d8', '#38a169', '#dd6b20', '#d69e2e', '#e53e3e', '#319795', '#805ad5', '#d53f8c',
+]
+
+function colorForIssueType(name: string): string {
+  const exact = ISSUE_TYPE_COLORS[name]
+  if (exact !== undefined) return exact
+  // 简单确定性 hash → 从色板取一个稳定颜色
+  let hash = 0
+  for (let i = 0; i < name.length; i += 1) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  }
+  const index = hash % FALLBACK_COLORS.length
+  return FALLBACK_COLORS[index] ?? FALLBACK_COLORS[0] ?? '#5a67d8'
+}
+
+function resolveIconUrl(baseUrl: string, iconUrl: string | undefined): string {
+  if (iconUrl === undefined || iconUrl === '') return ''
+  if (/^https?:\/\//i.test(iconUrl)) return iconUrl
+  // 相对路径（Jira Server 常见 /secure/viewavatar?...) → 拼上 baseUrl
+  return baseUrl.replace(/\/+$/, '') + (iconUrl.startsWith('/') ? iconUrl : '/' + iconUrl)
+}
+
+/**
+ * 调用 Jira REST API 读取 Issue Type 列表。
+ * 接口：GET {baseUrl}/rest/api/2/issuetype，Basic Auth（email + apiToken）。
+ */
+async function fetchJiraIssueTypes(settings: JiraSettings): Promise<JiraIssueType[]> {
+  const baseUrl = settings.baseUrl?.trim()
+  const email = settings.email?.trim()
+  const apiToken = settings.apiToken?.trim()
+  if (baseUrl === '' || baseUrl === undefined) throw new JiraConfigError('jira.baseUrl 未配置')
+  if (email === '' || email === undefined) throw new JiraConfigError('jira.email 未配置')
+  if (apiToken === '' || apiToken === undefined) throw new JiraConfigError('jira.apiToken 未配置')
+
+  const url = baseUrl.replace(/\/+$/, '') + '/rest/api/2/issuetype'
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: 'Basic ' + Buffer.from(`${email}:${apiToken}`).toString('base64'),
+    },
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
+  }
+  const body = await response.json() as Array<{
+    id?: unknown
+    name?: unknown
+    iconUrl?: unknown
+  }>
+  if (!Array.isArray(body)) throw new Error('Jira API 返回结构异常（期望数组）')
+
+  return body.filter((item) => typeof item.name === 'string').map((item) => {
+    const issueName = item.name as string
+    return {
+      id: String(item.id ?? issueName),
+      name: issueName,
+      color: colorForIssueType(issueName),
+      iconUrl: resolveIconUrl(baseUrl, typeof item.iconUrl === 'string' ? item.iconUrl : undefined),
+    }
+  })
+}
+
+class JiraConfigError extends Error {
+  readonly code = 'jira-not-configured'
+}
+
+function rpcFailure(code: string, message: string): ConnectionRpcResult<unknown> {
+  return { ok: false, error: { code, message, details: {} } }
+}
+
+export function apply(ctx: Context): void {
+  const logger = ctx.logger('hello-plugin')
+  logger.info('host loaded')
+  console.log('hello-plugin/host.js loaded')
+
+  // ---- settings：注册 jira namespace（baseUrl / email / apiToken）----
+  // settings 服务来自 base profile（settings-file），非必需：拿不到时 Jira 端点
+  // 返回「未配置」错误，插件其余功能（ping / 事件推送）不受影响。
+  const settingsService = ctx.get('settings')
+  let jiraSettings: JiraSettings = {}
+  if (settingsService !== undefined) {
+    const scope = settingsService.register('jira', z.object({
+      baseUrl: z.string().required(false),
+      email: z.string().required(false),
+      apiToken: z.string().required(false),
+    }))
+    jiraSettings = scope.get()
+    scope.watch(() => { jiraSettings = scope.get() })
+  } else {
+    logger.warn('settings 服务不可用，jira/issue-types 端点将返回未配置')
+  }
+
+  // ---- 宿主 → 客户端 的事件队列（长轮询）----
+  // 队列持有已 emit 但尚未被客户端取走的事件；waiters 记录当前挂起的长轮询请求。
+  // 语义是「广播」：一个事件被多个并发 poll（多标签页）各自看到。
+  const pending: PendingEvent[] = [] // 未取走的事件 { event, args }
+  const waiters: Array<{ resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }> = []
+
+  // 宿主主动推送一个事件。任何插件代码都能调用。
+  function emit(event: string, args: unknown[] = []): void {
+    pending.push({ event, args })
+    logger.info('emit:', event, ...args)
+    // 唤醒所有挂起的 poll：取一次快照，分发给每一个等待者（广播）。
+    if (waiters.length > 0) {
+      const snapshot = pending.splice(0)
+      while (waiters.length > 0) {
+        const w = waiters.shift()
+        if (w === undefined) break
+        clearTimeout(w.timer)
+        w.resolve(snapshot)
+      }
+    }
+  }
+
+  // 注册 /hello 通道：/hello/ping 请求-响应 + /hello/events/poll 长轮询 + /hello/jira/issue-types。
+  ctx.connection.rpc.handle('/hello', async (endpoint, payload, signal): Promise<ConnectionRpcResult<unknown>> => {
+    if (endpoint === 'ping') {
+      const nameArg = (payload as { args?: { name?: unknown } } | undefined)?.args?.name
+      const display = typeof nameArg === 'string' ? nameArg : '(anonymous)'
+      logger.info('client ping:', display)
+      return { ok: true, value: `pong from host, hello ${display}!` }
+    }
+
+    if (endpoint === 'jira/issue-types') {
+      try {
+        const types = await fetchJiraIssueTypes(jiraSettings)
+        return { ok: true, value: types }
+      } catch (error) {
+        if (error instanceof JiraConfigError) {
+          return rpcFailure(error.code, error.message)
+        }
+        logger.warn('jira/issue-types failed:', String(error))
+        return rpcFailure('jira-error', `读取 Jira Issue Type 失败：${String(error)}`)
+      }
+    }
+
+    if (endpoint === 'events/poll') {
+      // 已有事件 → 立即取走全部返回；没有 → 挂起等待，超时或新事件到达时返回。
+      if (pending.length > 0) {
+        return { ok: true, value: pending.splice(0) }
+      }
+      // 等待期间新事件到达：waiter.resolve(events) 由 emit 以广播方式调用。
+      // 超时：resolve(null) 表示本轮无事件。
+      // abort：从 waiters 移除并立即返回空数组，避免泄漏挂起连接。
+      const events = await new Promise<PendingEvent[] | null>((resolve) => {
+        let entry: { resolve: (value: PendingEvent[] | null) => void; timer: NodeJS.Timeout }
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(entry)
+          if (index !== -1) waiters.splice(index, 1)
+          resolve(null)
+        }, POLL_TIMEOUT_MS)
+        entry = {
+          resolve: (value) => {
+            clearTimeout(timer)
+            resolve(value)
+          },
+          timer,
+        }
+        waiters.push(entry)
+        signal.addEventListener('abort', () => {
+          const index = waiters.indexOf(entry)
+          if (index !== -1) waiters.splice(index, 1)
+          clearTimeout(timer)
+          resolve(null)
+        }, { once: true })
+      })
+      if (events === null) return { ok: true, value: [] }
+      return { ok: true, value: events }
+    }
+
+    return rpcFailure('bad-request', `unknown endpoint: ${endpoint}`)
+  })
+
+  // 暴露 emit 给宿主端其他逻辑调用；这里示例：每 5 秒自动发一个事件，
+  // 证明「host 主动触发」不需要任何客户端请求。
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      emit('hello/notice', ['host is alive at ' + new Date().toLocaleTimeString()])
+    }, 5_000)
+    return () => clearInterval(timer)
+  })
+}
+
+export type { JiraIssueType, JiraSettings }

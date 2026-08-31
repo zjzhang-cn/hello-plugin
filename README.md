@@ -6,9 +6,10 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `host.js` | 宿主半区：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道供客户端调用，并提供事件队列，可主动向客户端推送事件 |
-| `src/client/index.tsx` | 客户端 TypeScript 源码：注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主，同时以长轮询方式接收宿主推送的事件 |
-| `lib/client.js` | 由 `pnpm build` 生成的浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
+| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道供客户端调用，提供事件队列，可主动向客户端推送事件；通过 `ctx.settings` 读取 Jira 配置并调用 Jira API 返回 Issue Type 列表 |
+| `src/client/index.tsx` | 客户端 TypeScript 源码：注册一个右下角悬浮按钮 `HelloPill` 并注入 `shell.overlay` 插槽；点击按钮通过 `/hello` RPC 通道调用宿主（ping + 读取 Jira Issue Type），同时以长轮询方式接收宿主推送的事件 |
+| `lib/host.js` | 由 `pnpm build` 生成的宿主半区 bundle（Node ESM 单文件，无运行时裸 import） |
+| `lib/client.js` | 由 `pnpm build` 生成的客户端浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
 | `.vscode/launch.json` | VS Code 调试配置：在 deepseek-harness 中以本地 `dev.patch.yml` 启动 dsh Web |
 | `package.json` | 包清单，声明两个半区的导出与 dsh 集成字段 |
@@ -19,7 +20,7 @@
 
 dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理，插件加载模型详见 deepseek-harness 中的 `2026-07-23-client-plugin-loading-model.md`。
 
-- **宿主半区**：`exports["."]` → `host.js`。它作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。
+- **宿主半区**：`exports["."]` → `lib/host.js`。它作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。源码 `src/host/index.ts` 经 `pnpm build` 编译为单文件 Node ESM（schemastery 内联，其余依赖均为 type-only 被擦除）。
 - **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`dsh-client-modules` 扫描该声明（读取 entry 最近处的 package.json，要求 `dsh.client.platform=web` 且存在 `exports["./client"]`）把插件纳入启动图；浏览器端 bundle 通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂。注册是**惰性**的：脚本到达只登记 factory，首次 `require` 时才真正执行模块体。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。profile 合成器按 `dsh.profile.bundles` 顺序把每个 bundle 的 patch 应用到启动图（空 entry 列表之上），再叠加 profile 自身 patch 与启动器层。
 
@@ -29,10 +30,25 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 `dsh` 的双面插件天然支持「浏览器客户端 → Node 宿主」的 RPC 调用，走的是 client-connection 的通用通道：
 
-- **宿主端**：`host.js` 的 `apply(ctx)` 里 `inject: ['connection']`，用 `ctx.connection.rpc.handle('/hello', handler)` 注册一条自定义通道（不能拦截 `/api` —— 那是 api-gateway 独占的共享通道）。handler 收到 `(endpoint, payload)`，返回 `{ ok: true, value }` 或 `{ ok: false, error }`。
+- **宿主端**：`src/host/index.ts` 的 `apply(ctx)` 里 `inject: ['connection']`，用 `ctx.connection.rpc.handle('/hello', handler)` 注册一条自定义通道（不能拦截 `/api` —— 那是 api-gateway 独占的共享通道）。handler 收到 `(endpoint, payload)`，返回 `{ ok: true, value }` 或 `{ ok: false, error }`。
 - **客户端**：`src/client/index.tsx` 的插件声明 `inject: ['connection']`，点击 `HelloPill` 时用 `ctx.connection.rpc.call('/hello', 'ping', { args: { name } })` 发起调用。payload 遵循 Connection RPC 信封：必须是 `{ args: {...} }`。按钮文本会显示宿主返回的 `pong from host` 消息。
 
 宿主机日志里会输出 `client ping: ...`，可用于确认双向链路打通。
+
+## Jira Issue Type 类别条
+
+宿主半区通过 `ctx.settings` 注册 `jira` namespace，读取 Jira 连接配置并调用 Jira REST API，客户端点击按钮时拉取并渲染为彩色类别徽章条：
+
+- **配置**（`$DSH_HOME/settings.yaml`，由 base profile 的 settings-file 提供）：
+  ```yaml
+  jira:
+    baseUrl: https://your-jira.example
+    email: you@example.com
+    apiToken: <Jira API Token>
+  ```
+  未配置时插件照常加载，`jira/issue-types` 端点返回 `jira-not-configured`，客户端显示 `Jira: jira-not-configured` 提示条。
+- **宿主端点**：`/hello/jira/issue-types` 调用 `GET {baseUrl}/rest/api/2/issuetype`（Basic Auth，10 秒超时），把每个 Issue Type 映射为 `{ id, name, color, iconUrl }` —— 颜色按名称匹配常见 Jira 类型（Bug/Task/Story/Epic…），其余从色板确定性取值；相对图标路径自动拼接 baseUrl。
+- **客户端**：点击 `HelloPill` 时同时调用该端点，类别条渲染在按钮上方（每项为图标或代表色圆点 + 名称）；调用失败显示红色错误条。
 
 ## 宿主主动推送到客户端
 
@@ -59,6 +75,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-08-31 宿主半区迁移为 TypeScript + 读取 Jira Issue Type** — `host.js` 迁为 `src/host/index.ts`（构建为 `lib/host.js` Node ESM 单文件），并通过 `ctx.settings` 注册 `jira` namespace、新增 `/hello/jira/issue-types` 端点；客户端点击按钮时渲染 Jira 类别条；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 支持本机 Chrome 调试远端客户端 TSX** — bundle source map 直接映射到 TSX，并记录 Remote-SSH 下通过端口转发使用本机 DevTools 的流程；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 增加 DeepSeek Harness Web 调试启动项** — 新增 VS Code 配置，在 `deepseek-harness` 中以 `dev.patch.yml` 运行 `pnpm dsh web`；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 客户端迁移为 TypeScript 并提供浏览器构建** — 新增 `tsc` + `tsdown` 构建，将客户端产物改为 `lib/client.js`；详见 [开发日志](docs/dev-log.md)。
@@ -76,18 +93,20 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发与验证
 
-本仓库自身**没有**构建/测试设施（无 scripts、无依赖），它是被 deepseek-harness 工作区消费的插件。开发流程：
+构建与验证（两个半区都是 TypeScript，构建产物在 `lib/`）：
 
-1. 语法检查（无需安装依赖）：
+1. 构建（TypeScript 检查 + 双半区打包）：
    ```sh
-   node --check host.js client.js
+   pnpm build
+   node --check lib/host.js lib/client.js
    ```
-2. 启动一个挂载了本 bundle 的 dsh profile，宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端应能看到右下角的「👋 hello world」悬浮按钮。
+2. 启动一个挂载了本 bundle 的 dsh profile（`dev.patch.yml` 指向 `lib/host.js`），宿主端应能看到日志 `hello-plugin/host.js loaded` 与 `host loaded`；Web 端应能看到右下角的「👋 hello world」悬浮按钮。
 3. 点击悬浮按钮：宿主端日志追加 `client ping: browser`，按钮文本短暂变为 `pong from host, hello browser!`，随后恢复计数 —— 表示客户端 → 宿主的 RPC 链路打通。
 4. 宿主每 5 秒（无需操作）Web 端按钮上方出现新的气泡条 `hello/notice: host is alive at ...`，宿主日志追加 `emit: hello/notice ...` —— 表示宿主 → 客户端的推送链路打通。
+5. 在 `$DSH_HOME/settings.yaml` 配置 `jira:` 后点击按钮，按钮上方出现 Jira Issue Type 类别条（每项为图标或代表色圆点 + 名称）；未配置时出现 `Jira: jira-not-configured` 提示条。
 
 客户端半区在 dev 模式下由 harness 的 `scripts/dev-web.ts` watch 构建（按 `dsh.client` 扫描发现），改动后无需手动打包。
 
 ## 注意（与包名不一致处）
 
-- `cordis.patch.yml` 中 `name` 是绝对路径 `/Users/zhangzhenjiang/dsh/hello-plugin/host.js`，仅在本机有效。若要跨机器/作为依赖安装使用，应改为可移植的引用（如包名解析）。
+- `dev.patch.yml` 中 `name` 是绝对路径 `../hello-plugin/lib/host.js`，仅在本机有效。若要跨机器/作为依赖安装使用，应改为可移植的引用（正式 patch `cordis.patch.yml` 已用包名 `dsh-hello-plugin`，保持可移植）。
