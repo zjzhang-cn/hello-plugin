@@ -7,8 +7,17 @@ dsh-hello-plugin 是 dsh（DeepSeek Harness，全插件化 Cordis agent 框架�
 ## 仓库布局
 
 ```
-src/host/index.ts        宿主半区 TypeScript 源码：注册 /hello RPC 通道、读取 Jira 待办
-src/client/index.tsx     客户端半区 TypeScript 源码：悬浮组件展示「我的待办」Jira 列表
+src/host/index.ts        宿主半区入口：注册 /hello RPC 通道，整合各功能模块
+src/host/types.ts        共享类型（PendingEvent、JiraSettings、JiraTodo 等）
+src/host/constants.ts    常量（name、inject、POLL_TIMEOUT_MS、颜色映射等）
+src/host/errors.ts       错误类（JiraConfigError、rpcFailure）
+src/host/config.ts       工程配置文件加载（jira.config.json / llm.config.json）
+src/host/jira.ts         Jira API 工具（fetchJiraTodos、fetchJiraIssueDetail、addJiraComment）
+src/host/llm.ts          LLM 分析（generateLlmAnalysis）
+src/host/news.ts         Google News 工具（fetchGoogleNews、installGoogleNewsTool）
+src/client/index.ts      客户端入口：注册 HelloPill 到 shell.overlay 插槽
+src/client/types.ts      共享类型（HelloEvent、JiraTodo、JiraAnalysis）
+src/client/components/   客户端 UI 组件（TodoItem、TodoCard、AnalysisPanel、EventBubbles、NewsStatus、NewsButton、HelloButton、HelloPill）
 lib/host.js              由 pnpm build 生成的宿主半区 bundle（Node ESM，单文件无运行时依赖）
 lib/client.js            由 pnpm build 生成的客户端浏览器 bundle
 tsconfig.host.json       宿主半区 TypeScript 编译配置

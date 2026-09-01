@@ -2,6 +2,18 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-01 — 按功能模块拆分 client 和 host 源码
+
+**类型**：重构
+**涉及**：`src/client/*`、`src/host/*`、`tsconfig.client.json`、`tsconfig.host.json`、`tsdown.config.ts`
+**背景 / 问题**：client 和 host 的源码分别集中在单个文件中（424 行和 617 行），随着功能增加，单个文件变得臃肿，可读性和可维护性下降。
+**改动**：
+- Client：按 UI 组件维度拆分为 `types.ts` + `components/` 下的 `TodoItem.tsx`、`TodoCard.tsx`、`AnalysisPanel.tsx`、`EventBubbles.tsx`、`NewsStatus.tsx`、`NewsButton.tsx`、`HelloButton.tsx`、`HelloPill.tsx`，入口 `index.ts` 仅负责插槽注册。
+- Host：按功能域拆分为 `types.ts`、`constants.ts`、`errors.ts`、`config.ts`、`jira.ts`、`llm.ts`、`news.ts`，入口 `index.ts` 仅负责整合与 RPC 注册。
+- 两个 tsconfig 的 `moduleResolution` 统一改为 `Bundler`，避免内部模块导入时强制写 `.js` 扩展名。
+- `tsdown.config.ts` 的 client 入口从 `.tsx` 改为 `.ts`。
+**验证**：`pnpm build` / `pnpm typecheck` 通过；各模块文件无编译错误。
+
 ## 2026-08-31 — 工作区分组「新闻头条」，会话标题复原
 
 **类型**：功能

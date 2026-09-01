@@ -6,8 +6,24 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `src/host/index.ts` | 宿主半区 TypeScript 源码：Node 端 Cordis 插件入口，导出 `name` 与 `apply(ctx)`，通过 `ctx.logger` 输出日志；注册 `/hello` RPC 通道（ping + 读取 Jira 待办列表 + LLM 分析/评论 + 事件长轮询） |
-| `src/client/index.tsx` | 客户端 TypeScript 源码：注册右下角悬浮组件 `HelloPill` 并注入 `shell.overlay` 插槽；展示「我的待办」Jira 列表（类型徽章内嵌，点击触发 LLM 分析）+ 长轮询接收宿主事件气泡；点击按钮刷新待办并 ping 宿主 |
+| `src/host/index.ts` | 宿主半区入口：Node 端 Cordis 插件，`apply(ctx)` 注册 `/hello` RPC 通道（ping + Jira 待办/分析/评论 + 新闻会话 + 事件长轮询），整合各功能模块 |
+| `src/host/types.ts` | 共享类型：PendingEvent、JiraSettings、LlmConfig、JiraTodo、JiraIssueDetail、GoogleNewsItem、ConfigLoaderLogger |
+| `src/host/constants.ts` | 常量：name、inject、POLL_TIMEOUT_MS、ISSUE_TYPE_COLORS、FALLBACK_COLORS |
+| `src/host/errors.ts` | 错误类：JiraConfigError、rpcFailure |
+| `src/host/config.ts` | 工程配置文件加载：jira.config.json / llm.config.json 逐级查找与解析 |
+| `src/host/jira.ts` | Jira API 工具：fetchJiraTodos、fetchJiraIssueDetail、addJiraComment、adfToText |
+| `src/host/llm.ts` | LLM 分析：generateLlmAnalysis（BlockAssembler 聚合输出） |
+| `src/host/news.ts` | Google News 工具：fetchGoogleNews、installGoogleNewsTool（ScopedLayers 注册） |
+| `src/client/index.ts` | 客户端入口：通过 `ctx.slots.inject` 注册 `HelloPill` 到 `shell.overlay` 插槽 |
+| `src/client/types.ts` | 共享类型：HelloEvent、JiraTodo、JiraAnalysis |
+| `src/client/components/HelloPill.tsx` | 主容器组件：管理状态 + RPC 调用 + 组合子组件 |
+| `src/client/components/TodoCard.tsx` | 待办列表卡片：header + 刷新按钮 + 错误条 + TodoItem 列表 |
+| `src/client/components/TodoItem.tsx` | 单个待办项：类型徽章 + 摘要 + KEY/状态 |
+| `src/client/components/AnalysisPanel.tsx` | LLM 分析面板：loading / error / result + 评论操作 |
+| `src/client/components/EventBubbles.tsx` | 事件气泡条 |
+| `src/client/components/NewsStatus.tsx` | 新闻会话状态提示条 |
+| `src/client/components/NewsButton.tsx` | 获取新闻按钮 |
+| `src/client/components/HelloButton.tsx` | hello 按钮 + ping 交互 |
 | `lib/host.js` | 由 `pnpm build` 生成的宿主半区 bundle（Node ESM 单文件，schemastery 内联、dsh-llm external） |
 | `lib/client.js` | 由 `pnpm build` 生成的客户端浏览器 bundle（classic script），保留 ModuleLoader factory 协议 |
 | `cordis.patch.yml` | bundle patch 层：把宿主插件行插入启动图（boot graph）的插件列表 |
@@ -111,6 +127,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-09-01 按功能模块拆分 client 和 host 源码** — client 按 UI 组件拆分为 `types.ts` + `components/*`（TodoItem、TodoCard、AnalysisPanel、EventBubbles、NewsStatus、NewsButton、HelloButton、HelloPill），host 按功能域拆分为 `types.ts`、`constants.ts`、`errors.ts`、`config.ts`、`jira.ts`、`llm.ts`、`news.ts`；tsconfig 改用 `Bundler` moduleResolution，消除内部模块 `.js` 扩展名要求；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 工作区分组「新闻头条」，会话标题复原** — 新会话经 `workspaceRegistry.create(cwd, '新闻头条')` + `attachSession` 归入「新闻头条」工作区；会话标题恢复为「获取新闻 <HH:mm:ss>」；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 新闻会话分组名称改为「新闻头条」** — 会话标题前缀由「获取新闻」改为「新闻头条」（仍带时间戳）；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 新闻会话命名「获取新闻 + 时间」** — `news/start` 创建会话后经 `ctx.sessionTitle.rename` 命名「获取新闻 <HH:mm:ss>」，固定标题显示在会话列表；详见 [开发日志](docs/dev-log.md)。
