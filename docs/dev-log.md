@@ -2,6 +2,16 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-01 — 新增 AGENTS.md 并修正 CLAUDE.md 入口文件路径
+
+**类型**：文档
+**涉及**：`AGENTS.md`、`CLAUDE.md`
+**背景 / 问题**：hello-plugin 缺少给 AI agent 看的项目级开发指南；CLAUDE.md 中客户端入口文件路径仍写为 `src/client/index.tsx`，与实际拆分为 `index.ts` + `components/` 的结构不一致。
+**改动**：
+- 新增 `AGENTS.md`，包含 Repository layout、Commands、Conventions、Defensive patterns、Type safety and documentation 五个章节。
+- 修正 `CLAUDE.md` 中「客户端半区」描述，`src/client/index.tsx` → `src/client/index.ts`；补充 Panel 组件和最小化行为的 UI 插槽说明。
+**验证**：确认 `AGENTS.md` 和 `CLAUDE.md` 内容准确反映当前代码结构。
+
 ## 2026-09-01 — 按功能模块拆分 client 和 host 源码
 
 **类型**：重构

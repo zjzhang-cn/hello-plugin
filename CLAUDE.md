@@ -17,7 +17,7 @@ src/host/llm.ts          LLM 分析（generateLlmAnalysis）
 src/host/news.ts         Google News 工具（fetchGoogleNews、installGoogleNewsTool）
 src/client/index.ts      客户端入口：注册 HelloPill 到 shell.overlay 插槽
 src/client/types.ts      共享类型（HelloEvent、JiraTodo、JiraAnalysis）
-src/client/components/   客户端 UI 组件（TodoItem、TodoCard、AnalysisPanel、EventBubbles、NewsStatus、NewsButton、HelloButton、HelloPill）
+src/client/components/   客户端 UI 组件（HelloPill、Panel、TodoCard、AnalysisPanel、EventBubbles 等）
 lib/host.js              由 pnpm build 生成的宿主半区 bundle（Node ESM，单文件无运行时依赖）
 lib/client.js            由 pnpm build 生成的客户端浏览器 bundle
 tsconfig.host.json       宿主半区 TypeScript 编译配置
@@ -55,7 +55,7 @@ docs/
 同一个包同时提供 Node 宿主半区与浏览器客户端半区，两侧由同一份 vendored Cordis Loader 治理。深入理解见 [docs/plugin-dev-handbook.md](docs/plugin-dev-handbook.md)，能力全目录见 [docs/plugin-capability-catalog.md](docs/plugin-capability-catalog.md)。
 
 - **宿主半区**：`package.json` 的 `exports["."]` → `lib/host.js`。`src/host/index.ts` 经 `pnpm build` 编译为单文件 Node ESM。作为普通 Cordis 插件行进入启动图，`apply(ctx)` 在 Node 进程里运行。导出 `name` + `apply(ctx)`。
-- **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`src/client/index.tsx` 经 `pnpm build` 编译和封装；浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
+- **客户端半区**：`exports["./client"]` → `lib/client.js`，由 `dsh.client.platform = "web"` 声明。`src/client/index.ts` 经 `pnpm build` 编译和封装；浏览器端通过 `window.__ModuleLoader__.load({ id, factory })` 注册工厂；**id 必须等于包名**（图行 id）。
 - **patch 层**：`dsh.bundle.patch` → `cordis.patch.yml`。客户端半区**不写进** patch —— 由扫描发现。
 
 > 两个半区都已是 TypeScript：`tsconfig.host.json`（node 类型）+ `tsconfig.client.json`（DOM 类型），共用一份 `tsdown.config.ts`（数组配置：host → node ESM，client → ModuleLoader 工厂）。宿主 bundle 内联 schemastery（运行时构建设置 schema），`@deepseek-ai/dsh-llm` 标记为 external（其内部用 `createRequire` 读自身 package.json，内联会路径错位），运行时从 node_modules 解析（dsh-llm 是 harness 核心服务，始终挂载）。其余依赖均为 type-only，被擦除后产物无运行时裸 import，可直接以绝对路径加载。
@@ -107,6 +107,7 @@ dsh 的标准事件转发（`ctx.remote.$on`）对自定义事件不适用：`re
   )))
   ```
 - **组件只靠 props 拿服务，永不引用模块级 ctx**（`ctx` 只活在 `apply(ctx)` 闭包，React 不会传入组件）。
+- **Panel 最小化**：HelloPill 内部用 `isMinimized` 状态控制 Panel 显隐。最小化时只显示一个圆形恢复按钮（40×40px），点击后展开完整 Panel；Panel 顶部有最小化按钮（−），点击后折叠。
 
 ## 开发与验证
 

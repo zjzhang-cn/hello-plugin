@@ -7,6 +7,7 @@ import { EventBubbles } from './EventBubbles'
 import { NewsStatus } from './NewsStatus'
 import { NewsButton } from './NewsButton'
 import { HelloButton } from './HelloButton'
+import { Panel } from './Panel'
 
 interface HelloPillProps {
   connection: ConnectionHandle
@@ -29,6 +30,7 @@ export function HelloPill({ connection }: HelloPillProps): React.ReactElement {
   const [newsSession, setNewsSession] = React.useState<string | null>(null)
   const [newsLoading, setNewsLoading] = React.useState(false)
   const [newsError, setNewsError] = React.useState<string | null>(null)
+  const [isMinimized, setIsMinimized] = React.useState(false)
 
   const loadTodos = (): void => {
     if (loading) return
@@ -179,31 +181,60 @@ export function HelloPill({ connection }: HelloPillProps): React.ReactElement {
         fontFamily: 'system-ui, sans-serif',
       },
     },
-    React.createElement(TodoCard, {
-      todos,
-      loading,
-      todosError,
-      onRefresh: loadTodos,
-      onItemClick: analyzeTodo,
-    }),
-    React.createElement(AnalysisPanel, {
-      analysis,
-      analysisLoading,
-      analysisError,
-      commentState,
-      commentError,
-      onAddComment: addComment,
-      onCancel: cancelAnalysis,
-    }),
-    React.createElement(EventBubbles, { events }),
-    React.createElement(NewsStatus, { newsSession, newsError }),
-    React.createElement('div', {
-      style: { display: 'flex', gap: '8px', alignItems: 'center' },
-    },
-    React.createElement(NewsButton, {
-      newsLoading,
-      onStartNews: startNewsSession,
-    }),
-    React.createElement(HelloButton, { reply, count, onClick })),
+    isMinimized
+      ? React.createElement('button', {
+          onClick: () => setIsMinimized(false),
+          title: '展开面板',
+          style: {
+            border: 'none', borderRadius: '999px', width: '40px', height: '40px',
+            fontSize: '16px', color: '#fff', background: '#4f7cff', cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center',
+            justifyContent: 'center',
+          },
+        }, '□')
+      : React.createElement(Panel, null,
+          React.createElement('div', {
+            style: {
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '0 4px 4px', borderBottom: '1px solid rgba(0,0,0,0.08)',
+              fontSize: '12px', fontWeight: 600, color: '#1e293b',
+            },
+          },
+          'Hello Plugin',
+          React.createElement('button', {
+            onClick: () => setIsMinimized(true),
+            title: '最小化',
+            style: {
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              fontSize: '14px', color: '#6a7c99', padding: '0 4px',
+            },
+          }, '−')),
+          React.createElement(TodoCard, {
+            todos,
+            loading,
+            todosError,
+            onRefresh: loadTodos,
+            onItemClick: analyzeTodo,
+          }),
+          React.createElement(AnalysisPanel, {
+            analysis,
+            analysisLoading,
+            analysisError,
+            commentState,
+            commentError,
+            onAddComment: addComment,
+            onCancel: cancelAnalysis,
+          }),
+          React.createElement(EventBubbles, { events }),
+          React.createElement(NewsStatus, { newsSession, newsError }),
+          React.createElement('div', {
+            style: { display: 'flex', gap: '8px', alignItems: 'center' },
+          },
+          React.createElement(NewsButton, {
+            newsLoading,
+            onStartNews: startNewsSession,
+          }),
+          React.createElement(HelloButton, { reply, count, onClick })),
+        ),
   )
 }

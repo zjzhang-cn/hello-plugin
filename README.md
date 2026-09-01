@@ -127,6 +127,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-09-01 新增 AGENTS.md 并修正 CLAUDE.md 入口文件路径** — 新增 `AGENTS.md`（Repository layout、Commands、Conventions、Defensive patterns、Type safety and documentation）；修正 `CLAUDE.md` 客户端入口 `index.tsx` → `index.ts`，补充 Panel 组件与最小化行为说明；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 按功能模块拆分 client 和 host 源码** — client 按 UI 组件拆分为 `types.ts` + `components/*`（TodoItem、TodoCard、AnalysisPanel、EventBubbles、NewsStatus、NewsButton、HelloButton、HelloPill），host 按功能域拆分为 `types.ts`、`constants.ts`、`errors.ts`、`config.ts`、`jira.ts`、`llm.ts`、`news.ts`；tsconfig 改用 `Bundler` moduleResolution，消除内部模块 `.js` 扩展名要求；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 工作区分组「新闻头条」，会话标题复原** — 新会话经 `workspaceRegistry.create(cwd, '新闻头条')` + `attachSession` 归入「新闻头条」工作区；会话标题恢复为「获取新闻 <HH:mm:ss>」；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 新闻会话分组名称改为「新闻头条」** — 会话标题前缀由「获取新闻」改为「新闻头条」（仍带时间戳）；详见 [开发日志](docs/dev-log.md)。
