@@ -2,6 +2,17 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-01 — fetchGoogleNews 支持 HTTP 代理
+
+**类型**：功能
+**涉及**：`src/host/news.ts`
+**背景 / 问题**：`fetchGoogleNews` 直接用 Node 全局 fetch 抓 Google News RSS，未走代理；在只能经 HTTP 代理访问外网的网络环境下（如本机 `https_proxy=http://127.0.0.1:8080`）抓取超时失败。
+**改动**：
+- 新增按 curl 语义解析代理环境的 `resolveProxy`：`HTTPS_PROXY`/`HTTP_PROXY`（兼容小写）→ `ALL_PROXY`，目标命中 `NO_PROXY`（支持 `*`、精确主机、`.后缀` 子域、`host:port`）时直连。
+- 新增代理链路（纯 Node 内建 `node:net` / `node:tls`，不引入新运行时依赖）：https 目标走 CONNECT 隧道（支持 http/https 代理与 Basic 认证）再包 TLS；http 目标向代理发绝对 URI 形式请求；手写 HTTP 解析（状态行/头/body，含 chunked 解码、Content-Length 提前收尾、`Connection: close` 收尾）并手动跟随重定向（上限 5 次）。
+- `fetchGoogleNews` 改为经 `fetchWithProxy`：无代理时行为与原来完全一致（全局 fetch + 10s 超时）。
+**验证**：`pnpm build` / `node --check lib/host.js` 通过；真实环境（`https_proxy=http://127.0.0.1:8080`）抓取 Google News 成功（跟随 302 后返回 13 条）；本地最小代理 + 本地 https/http 目标跑通 10 项用例：CONNECT 隧道、302 跟随、chunked、404、重定向上限、https→http 绝对 URI 形式、NO_PROXY 直连、无代理直连、代理 Basic 认证、代理拒绝连接报错。
+
 ## 2026-09-01 — 扩展 Jira 能力并注册全局工具
 
 **类型**：功能

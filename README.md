@@ -97,7 +97,7 @@ dsh 采用「双面（dual-face）」插件模型：同一个包同时提供 Nod
 
 - **宿主端点**：`/hello/news/start`（`{ args: {} }`）。`ctx.agents.create()` 创建新会话（sessionId `news-<uuid>`，agentOptions 取 `llm.config.json` 的 provider/model）→ `ctx.sessionTitle.rename()` 命名「获取新闻 <HH:mm:ss>」→ `setup` 中注册**作用域工具** `google_news` → `agent.followup()` 让 Agent 获取新闻并总结 → 立即返回 `{ sessionId }`（不等待完成，会话后台运行）。
 - **工作区分组**：`workspaceRegistry.create(cwd, '新闻头条')` 创建/复用「新闻头条」工作区（`setTitle` 固定显示名）→ `attachSession(sessionId)` 把会话归入该工作区，dsh Web UI 会话列表按「新闻头条」分组显示。
-- **google_news 工具**：`fetch('https://news.google.com/rss?hl=...')`（Node 全局 fetch）→ 正则解析 `<item>` 的标题/链接/发布时间，取前 15 条。工具通过 `ctx.tools.register` 从 agentCtx 注册（`ScopedLayers` 作用域机制），**仅该会话的 Agent 可见**，不污染全局工具表。
+- **google_news 工具**：抓取 `https://news.google.com/rss?hl=...`。**支持 HTTP 代理**：优先走 Node 全局 fetch；环境配置了 `HTTPS_PROXY`/`HTTP_PROXY`（兼容小写）/`ALL_PROXY` 且目标不在 `NO_PROXY` 内时，经代理链路抓取（https 目标走 CONNECT 隧道，纯 Node 内建实现，无新增运行时依赖），自动跟随重定向。正则解析 `<item>` 的标题/链接/发布时间，取前 15 条。工具通过 `ctx.tools.register` 从 agentCtx 注册（`ScopedLayers` 作用域机制），**仅该会话的 Agent 可见**，不污染全局工具表。
 - **会话可见性**：宿主创建会话自动触发 `api-session/added` Remote 事件，dsh Web UI 会话列表自动出现新会话（无需客户端刷新）；点开可见 user/message → google_news 工具调用（tool/call + tool/result 含新闻列表）→ assistant 总结的完整交互。
 - **客户端**：悬浮区域独立「📰 获取新闻」按钮（请求中显示「获取中…」）→ 调用 `news/start` → 按钮上方显示「✅ 已创建会话 <id>，在会话列表查看 Agent 总结」；失败显示红色错误条（如 `llm-not-configured`）。
 - 需要 `llm.config.json` 配置 provider/model；Google News RSS 抓取无需任何 key。
@@ -127,6 +127,7 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-09-01 fetchGoogleNews 支持 HTTP 代理** — 按 curl 语义读取 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`（兼容小写）与 `NO_PROXY`；代理链路纯 Node 内建实现（https 走 CONNECT 隧道、http 走绝对 URI 形式，含 Basic 认证、重定向跟随、chunked 解码），无代理时行为不变；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 扩展 Jira 能力并注册全局工具** — `src/host/jira.ts` 新增搜索/创建/状态变更函数；新建 `src/host/jira-tools.ts` 注册 6 个全局 Jira 工具（jira_search_issues、jira_get_issue、jira_create_issue、jira_add_comment、jira_update_status、jira_get_transitions）；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 新建 hello-plugin dsh 能力全景文档** — 新建 `docs/hello-plugin-capabilities.md`，按 `plugin-capability-catalog.md` 类别体系系统梳理已使用（10 项）及未使用（50+ 项）能力，标注源码位置与潜在用途；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 新增 AGENTS.md 并修正 CLAUDE.md 入口文件路径** — 新增 `AGENTS.md`（Repository layout、Commands、Conventions、Defensive patterns、Type safety and documentation）；修正 `CLAUDE.md` 客户端入口 `index.tsx` → `index.ts`，补充 Panel 组件与最小化行为说明；详见 [开发日志](docs/dev-log.md)。
