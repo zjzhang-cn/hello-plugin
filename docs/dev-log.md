@@ -2,6 +2,33 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-01 — 扩展 Jira 能力并注册全局工具
+
+**类型**：功能
+**涉及**：`src/host/jira.ts`、`src/host/jira-tools.ts`、`src/host/index.ts`
+**背景 / 问题**：hello-plugin 的 Jira 功能仅覆盖「查询待办」「获取详情」「添加评论」，Agent 无法通过工具调用的方式操作 Jira（如搜索任意 JQL、创建 issue、更新状态）。
+**改动**：
+- `src/host/jira.ts` 新增 4 个函数：`searchJiraIssues`（JQL 搜索）、`createJiraIssue`（创建）、`getJiraTransitions`（获取可用状态变更）、`transitionJiraIssue`（执行状态变更）。
+- 新建 `src/host/jira-tools.ts`，定义 6 个 Jira 工具的 `ToolDefinition`，通过 `ctx.tools.register` 注册为全局工具：
+  - `jira_search_issues`、`jira_get_issue`、`jira_create_issue`、`jira_add_comment`、`jira_update_status`、`jira_get_transitions`
+- `src/host/index.ts` 导入 `registerJiraTools` 并在 `apply()` 中调用注册。
+**验证**：`pnpm typecheck` 通过；工具注册代码与 `google_news` 工具模式一致。
+
+## 2026-09-01 — 新建 hello-plugin dsh 能力全景文档
+
+**类型**：文档
+**涉及**：`docs/hello-plugin-capabilities.md`
+**背景 / 问题**：hello-plugin 已使用了多种 dsh 能力（RPC、插槽、Agent、LLM、工具注册等），但缺少一份系统的全景视图，开发者难以快速了解「已用了什么、还有什么可用」。
+**改动**：
+- 新建 `docs/hello-plugin-capabilities.md`，按 `plugin-capability-catalog.md` 的类别体系梳理：
+  - 6 大类别（Cordis 内核、宿主端核心服务、客户端核心服务、双向通信、插槽与 UI、工具贡献）
+  - 每个能力标注「已使用 ✅ / 未使用 ⬜」
+  - 已使用的附源码位置和使用场景
+  - 未使用的附潜在用途
+- 已使用 10 项：logger/effect/get、settings/workspaceRegistry、agents/sessionTitle、llm/tools、connection/slots、Unary RPC/长轮询、shell.overlay、tools.register
+- 未使用 50+ 项：fs/shell/web、commands/approval、remote/layout/theme、Remote events/WebSocket mux 等
+**验证**：文档结构与 `plugin-capability-catalog.md` 对齐，源码位置可定位。
+
 ## 2026-09-01 — 新增 AGENTS.md 并修正 CLAUDE.md 入口文件路径
 
 **类型**：文档

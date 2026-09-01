@@ -6,6 +6,7 @@ import z from '@deepseek-ai/schemastery'
 import { name, inject, POLL_TIMEOUT_MS } from './constants'
 import { loadProjectJiraConfig, loadProjectLlmConfig } from './config'
 import { fetchJiraTodos, fetchJiraIssueDetail, addJiraComment } from './jira'
+import { registerJiraTools } from './jira-tools'
 import { generateLlmAnalysis } from './llm'
 import { installGoogleNewsTool } from './news'
 import { JiraConfigError, rpcFailure } from './errors'
@@ -59,6 +60,9 @@ export function apply(ctx: Context): void {
       }
     }
   }
+
+  // ---- 注册 Jira 全局工具 ----
+  registerJiraTools(ctx, resolveJiraSettings)
 
   // 注册 /hello 通道。
   ctx.connection.rpc.handle('/hello', async (endpoint, payload, signal): Promise<ConnectionRpcResult<unknown>> => {

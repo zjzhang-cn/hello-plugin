@@ -150,3 +150,102 @@ async function jiraApiError(response: Response): Promise<Error> {
   const detail = await response.text().catch(() => '')
   return new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
 }
+
+/** 通过 JQL 搜索 issues。 */
+export async function searchJiraIssues(settings: JiraSettings, jql: string): Promise<JiraTodo[]> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = baseUrl + '/rest/api/3/search/jql'
+    + '?jql=' + encodeURIComponent(jql)
+    + '&fields=key,summary,issuetype,status&maxResults=50'
+  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw await jiraApiError(response)
+  const body = await response.json() as {
+    issues?: Array<{
+      key?: unknown
+      fields?: {
+        summary?: unknown
+        issuetype?: { name?: unknown; iconUrl?: unknown }
+        status?: { name?: unknown }
+      }
+    }>
+  }
+  const issues = body.issues
+  if (!Array.isArray(issues)) throw new Error('Jira API 返回结构异常（期望 issues 数组）')
+  return issues.filter((issue) => typeof issue.key === 'string').map((issue) => {
+    const fields = issue.fields ?? {}
+    const typeName = typeof fields.issuetype?.name === 'string' ? fields.issuetype.name : 'Issue'
+    return {
+      key: issue.key as string,
+      summary: typeof fields.summary === 'string' ? fields.summary : '',
+      typeName,
+      typeColor: colorForIssueType(typeName),
+      typeIconUrl: resolveIconUrl(baseUrl, typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined),
+      statusName: typeof fields.status?.name === 'string' ? fields.status.name : '',
+    }
+  })
+}
+
+/** 创建 Jira issue。 */
+export async function createJiraIssue(
+  settings: JiraSettings,
+  { project, summary, description, issueType }: { project: string; summary: string; description?: string; issueType?: string },
+): Promise<{ key: string }> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = `${baseUrl}/rest/api/3/issue`
+  const body = {
+    fields: {
+      project: { key: project },
+      summary,
+      issuetype: { name: issueType ?? 'Task' },
+      description: description
+        ? {
+            type: 'doc',
+            version: 1,
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: description }] }],
+          }
+        : undefined,
+    },
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw await jiraApiError(response)
+  const result = await response.json() as { key?: unknown }
+  return { key: typeof result.key === 'string' ? result.key : '' }
+}
+
+/** 获取 issue 可执行的状态变更列表。 */
+export async function getJiraTransitions(settings: JiraSettings, key: string): Promise<Array<{ id: string; name: string }>> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`
+  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
+  if (!response.ok) throw await jiraApiError(response)
+  const body = await response.json() as {
+    transitions?: Array<{ id?: unknown; name?: unknown }>
+  }
+  const transitions = body.transitions ?? []
+  return transitions
+    .filter((t) => typeof t.id === 'string' && typeof t.name === 'string')
+    .map((t) => ({ id: t.id as string, name: t.name as string }))
+}
+
+/** 执行 issue 状态变更。 */
+export async function transitionJiraIssue(settings: JiraSettings, key: string, transitionId: string): Promise<void> {
+  assertJiraSettings(settings)
+  const baseUrl = jiraBaseUrl(settings)
+  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`
+  const body = { transition: { id: transitionId } }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw await jiraApiError(response)
+}

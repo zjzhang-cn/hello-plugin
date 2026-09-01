@@ -4,8 +4,9 @@ export const name = 'dsh-hello-plugin'
 // 供浏览器客户端通过 ctx.connection.rpc.call 调用。settings 服务由 base profile
 // 的 settings-file 提供，这里用 ctx.get 可选获取（拿不到也能加载插件）。
 // agents 服务（core/agent）用于创建新会话驱动 Agent；sessionTitle 用于给会话命名；
-// workspaceRegistry 用于把会话归入「新闻头条」工作区。
-export const inject = ['connection', 'agents', 'sessionTitle', 'workspaceRegistry']
+// workspaceRegistry 用于把会话归入「新闻头条」工作区；
+// tools 服务用于注册全局工具（Jira 工具）。
+export const inject = ['connection', 'agents', 'sessionTitle', 'workspaceRegistry', 'tools']
 
 // 长轮询超时：客户端挂起一个 poll 请求，宿主在超时内等不到新事件就返回空数组。
 // 客户端收到空数组后立即发起下一次 poll —— 有事件时近乎实时，无事件时只挂一个请求。

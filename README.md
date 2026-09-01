@@ -127,6 +127,8 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 ## 开发日志
 
+- **2026-09-01 扩展 Jira 能力并注册全局工具** — `src/host/jira.ts` 新增搜索/创建/状态变更函数；新建 `src/host/jira-tools.ts` 注册 6 个全局 Jira 工具（jira_search_issues、jira_get_issue、jira_create_issue、jira_add_comment、jira_update_status、jira_get_transitions）；详见 [开发日志](docs/dev-log.md)。
+- **2026-09-01 新建 hello-plugin dsh 能力全景文档** — 新建 `docs/hello-plugin-capabilities.md`，按 `plugin-capability-catalog.md` 类别体系系统梳理已使用（10 项）及未使用（50+ 项）能力，标注源码位置与潜在用途；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 新增 AGENTS.md 并修正 CLAUDE.md 入口文件路径** — 新增 `AGENTS.md`（Repository layout、Commands、Conventions、Defensive patterns、Type safety and documentation）；修正 `CLAUDE.md` 客户端入口 `index.tsx` → `index.ts`，补充 Panel 组件与最小化行为说明；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 按功能模块拆分 client 和 host 源码** — client 按 UI 组件拆分为 `types.ts` + `components/*`（TodoItem、TodoCard、AnalysisPanel、EventBubbles、NewsStatus、NewsButton、HelloButton、HelloPill），host 按功能域拆分为 `types.ts`、`constants.ts`、`errors.ts`、`config.ts`、`jira.ts`、`llm.ts`、`news.ts`；tsconfig 改用 `Bundler` moduleResolution，消除内部模块 `.js` 扩展名要求；详见 [开发日志](docs/dev-log.md)。
 - **2026-08-31 工作区分组「新闻头条」，会话标题复原** — 新会话经 `workspaceRegistry.create(cwd, '新闻头条')` + `attachSession` 归入「新闻头条」工作区；会话标题恢复为「获取新闻 <HH:mm:ss>」；详见 [开发日志](docs/dev-log.md)。
