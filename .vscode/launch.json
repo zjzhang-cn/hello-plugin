@@ -7,7 +7,7 @@
 		{
 			"type": "node",
 			"request": "launch",
-			"name": "DSH Web（hello-plugin patch）",
+			"name": "PNPM Launch DSH Web（hello-plugin patch）",
 			"skipFiles": [
 				"<node_internals>/**"
 			],
@@ -18,6 +18,29 @@
 				"--patch",
 				"../hello-plugin/dev.patch.yml"
 			],
+			"cwd": "${workspaceFolder}/../deepseek-harness",
+			"console": "integratedTerminal",
+			"autoAttachChildProcesses": true
+		},
+		{
+			"type": "node",
+			"request": "launch",
+			"name": "NODE Launch DSH Web（hello-plugin patch）",
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"runtimeExecutable": "node",
+			"runtimeArgs": [
+				"--import",
+				"tsx/esm",
+				"apps/cli/src/bin.ts",
+				"web",
+				"--patch",
+				"../hello-plugin/dev.patch.yml"
+			],
+			"env": {
+				"DEBUG":"hello-plugin*"
+			},
 			"cwd": "${workspaceFolder}/../deepseek-harness",
 			"console": "integratedTerminal",
 			"autoAttachChildProcesses": true
