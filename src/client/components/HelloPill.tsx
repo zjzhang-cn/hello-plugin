@@ -169,7 +169,6 @@ export function HelloPill({ connection }: HelloPillProps): React.ReactElement {
           replyTimerRef.current = null
         }, 1_000)
       })
-    loadTodos()
   }
 
   return React.createElement(
