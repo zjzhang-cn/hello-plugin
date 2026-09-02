@@ -1,3 +1,5 @@
+import { Version3Client } from 'jira.js'
+import type { Document } from 'jira.js/version3/models'
 import { ISSUE_TYPE_COLORS, FALLBACK_COLORS } from './constants'
 import { JiraConfigError } from './errors'
 import type { JiraSettings, JiraTodo, JiraIssueDetail } from './types'
@@ -19,13 +21,6 @@ function resolveIconUrl(baseUrl: string, iconUrl: string | undefined): string {
   return baseUrl.replace(/\/+$/, '') + (iconUrl.startsWith('/') ? iconUrl : '/' + iconUrl)
 }
 
-function jiraHeaders(settings: JiraSettings): Record<string, string> {
-  return {
-    Accept: 'application/json',
-    Authorization: 'Basic ' + Buffer.from(`${settings.email}:${settings.apiToken}`).toString('base64'),
-  }
-}
-
 function assertJiraSettings(settings: JiraSettings): void {
   if (settings.baseUrl === undefined || settings.baseUrl.trim() === '') throw new JiraConfigError('jira.baseUrl 未配置')
   if (settings.email === undefined || settings.email.trim() === '') throw new JiraConfigError('jira.email 未配置')
@@ -34,6 +29,19 @@ function assertJiraSettings(settings: JiraSettings): void {
 
 function jiraBaseUrl(settings: JiraSettings): string {
   return (settings.baseUrl as string).replace(/\/+$/, '')
+}
+
+function createJiraClient(settings: JiraSettings): Version3Client {
+  assertJiraSettings(settings)
+  return new Version3Client({
+    host: settings.baseUrl as string,
+    authentication: {
+      basic: {
+        email: settings.email as string,
+        apiToken: settings.apiToken as string,
+      },
+    },
+  })
 }
 
 /** 把 Jira 的 ADF（Atlassian Document Format）节点递归转成纯文本。 */
@@ -55,34 +63,25 @@ function adfToText(node: unknown): string {
 export async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]> {
   assertJiraSettings(settings)
   const baseUrl = jiraBaseUrl(settings)
+  const client = createJiraClient(settings)
   const jql = 'assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC'
-  const url = baseUrl + '/rest/api/3/search/jql'
-    + '?jql=' + encodeURIComponent(jql)
-    + '&fields=key,summary,issuetype,status&maxResults=50'
-  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
-  if (!response.ok) throw await jiraApiError(response)
-  const body = await response.json() as {
-    issues?: Array<{
-      key?: unknown
-      fields?: {
-        summary?: unknown
-        issuetype?: { name?: unknown; iconUrl?: unknown }
-        status?: { name?: unknown }
-      }
-    }>
-  }
-  const issues = body.issues
+  const result = await client.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
+    jql,
+    fields: ['key', 'summary', 'issuetype', 'status'],
+    maxResults: 50,
+  })
+  const issues = result.issues
   if (!Array.isArray(issues)) throw new Error('Jira API 返回结构异常（期望 issues 数组）')
   return issues.filter((issue) => typeof issue.key === 'string').map((issue) => {
-    const fields = issue.fields ?? {}
-    const typeName = typeof fields.issuetype?.name === 'string' ? fields.issuetype.name : 'Issue'
+    const fields = issue.fields
+    const typeName = fields.issuetype?.name ?? fields.issueType?.name ?? 'Issue'
     return {
-      key: issue.key as string,
-      summary: typeof fields.summary === 'string' ? fields.summary : '',
+      key: issue.key,
+      summary: fields.summary ?? '',
       typeName,
       typeColor: colorForIssueType(typeName),
-      typeIconUrl: resolveIconUrl(baseUrl, typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined),
-      statusName: typeof fields.status?.name === 'string' ? fields.status.name : '',
+      typeIconUrl: resolveIconUrl(baseUrl, fields.issuetype?.iconUrl ?? fields.issueType?.iconUrl ?? undefined),
+      statusName: fields.status?.name ?? '',
     }
   })
 }
@@ -90,19 +89,12 @@ export async function fetchJiraTodos(settings: JiraSettings): Promise<JiraTodo[]
 /** 读取单个 issue 详情（summary + description + comments），供 LLM 分析。 */
 export async function fetchJiraIssueDetail(settings: JiraSettings, key: string): Promise<JiraIssueDetail> {
   assertJiraSettings(settings)
-  const baseUrl = jiraBaseUrl(settings)
-  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,comment`
-  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
-  if (!response.ok) throw await jiraApiError(response)
-  const body = await response.json() as {
-    key?: unknown
-    fields?: {
-      summary?: unknown
-      description?: unknown
-      comment?: { comments?: Array<{ body?: unknown; author?: { displayName?: unknown } }> }
-    }
-  }
-  const fields = body.fields ?? {}
+  const client = createJiraClient(settings)
+  const issue = await client.issues.getIssue({
+    issueIdOrKey: key,
+    fields: ['summary', 'description', 'comment'],
+  })
+  const fields = issue.fields
   const comments = fields.comment?.comments
   const commentsText = (Array.isArray(comments) ? comments : [])
     .map((comment) => {
@@ -113,8 +105,8 @@ export async function fetchJiraIssueDetail(settings: JiraSettings, key: string):
     .filter((text) => text !== '')
     .join('\n')
   return {
-    key: typeof body.key === 'string' ? body.key : key,
-    summary: typeof fields.summary === 'string' ? fields.summary : '',
+    key: issue.key ?? key,
+    summary: fields.summary ?? '',
     descriptionText: adfToText(fields.description).trim(),
     commentsText,
   }
@@ -123,10 +115,10 @@ export async function fetchJiraIssueDetail(settings: JiraSettings, key: string):
 /** 往指定 issue 添加一条评论（ADF 格式 body）。 */
 export async function addJiraComment(settings: JiraSettings, key: string, text: string): Promise<void> {
   assertJiraSettings(settings)
-  const baseUrl = jiraBaseUrl(settings)
-  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/comment`
-  const body = {
-    body: {
+  const client = createJiraClient(settings)
+  await client.issueComments.addComment({
+    issueIdOrKey: key,
+    comment: {
       type: 'doc',
       version: 1,
       content: [
@@ -135,53 +127,32 @@ export async function addJiraComment(settings: JiraSettings, key: string, text: 
           content: [{ type: 'text', text }],
         },
       ],
-    },
-  }
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+    } as Document,
   })
-  if (!response.ok) throw await jiraApiError(response)
-}
-
-async function jiraApiError(response: Response): Promise<Error> {
-  const detail = await response.text().catch(() => '')
-  return new Error(`Jira API ${response.status} ${response.statusText}: ${detail.slice(0, 200)}`)
 }
 
 /** 通过 JQL 搜索 issues。 */
 export async function searchJiraIssues(settings: JiraSettings, jql: string): Promise<JiraTodo[]> {
   assertJiraSettings(settings)
   const baseUrl = jiraBaseUrl(settings)
-  const url = baseUrl + '/rest/api/3/search/jql'
-    + '?jql=' + encodeURIComponent(jql)
-    + '&fields=key,summary,issuetype,status&maxResults=50'
-  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
-  if (!response.ok) throw await jiraApiError(response)
-  const body = await response.json() as {
-    issues?: Array<{
-      key?: unknown
-      fields?: {
-        summary?: unknown
-        issuetype?: { name?: unknown; iconUrl?: unknown }
-        status?: { name?: unknown }
-      }
-    }>
-  }
-  const issues = body.issues
+  const client = createJiraClient(settings)
+  const result = await client.issueSearch.searchForIssuesUsingJqlEnhancedSearch({
+    jql,
+    fields: ['key', 'summary', 'issuetype', 'status'],
+    maxResults: 50,
+  })
+  const issues = result.issues
   if (!Array.isArray(issues)) throw new Error('Jira API 返回结构异常（期望 issues 数组）')
   return issues.filter((issue) => typeof issue.key === 'string').map((issue) => {
-    const fields = issue.fields ?? {}
-    const typeName = typeof fields.issuetype?.name === 'string' ? fields.issuetype.name : 'Issue'
+    const fields = issue.fields
+    const typeName = fields.issuetype?.name ?? fields.issueType?.name ?? 'Issue'
     return {
-      key: issue.key as string,
-      summary: typeof fields.summary === 'string' ? fields.summary : '',
+      key: issue.key,
+      summary: fields.summary ?? '',
       typeName,
       typeColor: colorForIssueType(typeName),
-      typeIconUrl: resolveIconUrl(baseUrl, typeof fields.issuetype?.iconUrl === 'string' ? fields.issuetype.iconUrl : undefined),
-      statusName: typeof fields.status?.name === 'string' ? fields.status.name : '',
+      typeIconUrl: resolveIconUrl(baseUrl, fields.issuetype?.iconUrl ?? fields.issueType?.iconUrl ?? undefined),
+      statusName: fields.status?.name ?? '',
     }
   })
 }
@@ -192,9 +163,8 @@ export async function createJiraIssue(
   { project, summary, description, issueType }: { project: string; summary: string; description?: string; issueType?: string },
 ): Promise<{ key: string }> {
   assertJiraSettings(settings)
-  const baseUrl = jiraBaseUrl(settings)
-  const url = `${baseUrl}/rest/api/3/issue`
-  const body = {
+  const client = createJiraClient(settings)
+  const result = await client.issues.createIssue({
     fields: {
       project: { key: project },
       summary,
@@ -207,29 +177,16 @@ export async function createJiraIssue(
           }
         : undefined,
     },
-  }
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
   })
-  if (!response.ok) throw await jiraApiError(response)
-  const result = await response.json() as { key?: unknown }
-  return { key: typeof result.key === 'string' ? result.key : '' }
+  return { key: result.key }
 }
 
 /** 获取 issue 可执行的状态变更列表。 */
 export async function getJiraTransitions(settings: JiraSettings, key: string): Promise<Array<{ id: string; name: string }>> {
   assertJiraSettings(settings)
-  const baseUrl = jiraBaseUrl(settings)
-  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`
-  const response = await fetch(url, { headers: jiraHeaders(settings), signal: AbortSignal.timeout(10_000) })
-  if (!response.ok) throw await jiraApiError(response)
-  const body = await response.json() as {
-    transitions?: Array<{ id?: unknown; name?: unknown }>
-  }
-  const transitions = body.transitions ?? []
+  const client = createJiraClient(settings)
+  const result = await client.issues.getTransitions({ issueIdOrKey: key })
+  const transitions = result.transitions ?? []
   return transitions
     .filter((t) => typeof t.id === 'string' && typeof t.name === 'string')
     .map((t) => ({ id: t.id as string, name: t.name as string }))
@@ -238,14 +195,9 @@ export async function getJiraTransitions(settings: JiraSettings, key: string): P
 /** 执行 issue 状态变更。 */
 export async function transitionJiraIssue(settings: JiraSettings, key: string, transitionId: string): Promise<void> {
   assertJiraSettings(settings)
-  const baseUrl = jiraBaseUrl(settings)
-  const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`
-  const body = { transition: { id: transitionId } }
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { ...jiraHeaders(settings), 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+  const client = createJiraClient(settings)
+  await client.issues.doTransition({
+    issueIdOrKey: key,
+    transition: { id: transitionId },
   })
-  if (!response.ok) throw await jiraApiError(response)
 }

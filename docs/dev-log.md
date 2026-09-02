@@ -2,6 +2,27 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-02 — jira.ts 改用 jira.js v5 官方客户端（修复 410 弃用端点）
+
+**类型**：重构 + BUG 修复
+**涉及**：`src/host/jira.ts`、`package.json`
+**背景 / 问题**：
+1. `jira.ts` 中所有 Jira API 调用均手写 `fetch` + URL 拼接 + 手动解析 JSON，代码冗长且缺乏类型安全；Atlassian 官方提供 `jira.js` 库，支持 TypeScript，API 覆盖完整。
+2. **升级后发现问题**：`jira.js` v3.0.5 的 `searchForIssuesUsingJql` 内部调用 `/rest/api/3/search`，该端点已被 Jira Cloud 弃用（410 Gone），须用 `/rest/api/3/search/jql`。
+**改动**：
+- 安装 `jira.js` v5.4.0（`Version3Client`）。
+- `jira.ts` 移除 `jiraHeaders`、`jiraApiError` 等内部 fetch 辅助函数。
+- 新增 `createJiraClient(settings)` 构造器，返回配置好 `host` + `basic` 认证的 `Version3Client`。
+- 7 个导出函数改用 `jira.js` API：
+  - `fetchJiraTodos` / `searchJiraIssues` → `client.issueSearch.searchForIssuesUsingJqlEnhancedSearch`（新端点 `/rest/api/3/search/jql`）
+  - `fetchJiraIssueDetail` → `client.issues.getIssue`
+  - `addJiraComment` → `client.issueComments.addComment`
+  - `createJiraIssue` → `client.issues.createIssue`
+  - `getJiraTransitions` → `client.issues.getTransitions`
+  - `transitionJiraIssue` → `client.issues.doTransition`
+- 保持函数签名不变，`index.ts` 与 `jira-tools.ts` 零改动。
+**验证**：`pnpm build` 通过（host/client 双半区无类型错误）；`node --check lib/host.js` 通过。
+
 ## 2026-09-01 — fetchGoogleNews 支持 HTTP 代理
 
 **类型**：功能
