@@ -26,6 +26,10 @@ tsdown.config.ts           双半区 bundle 配置（host: node ESM；client: Mo
 cordis.patch.yml           bundle patch 层：宿主插件行插入启动图
 dev.patch.yml              开发用 patch（绝对路径，已 gitignore）
 docs/dev-log.md            开发日志（每次功能/修复必记，最新在上）
+docs/hello-plugin-capabilities.md   本插件 dsh 能力全景（已使用/未使用清单）
+docs/learning-path.md      学习路径（按章节由简入深）
+docs/plugin-dev-handbook.md 开发手册（过程 + 规范 + 踩坑）
+docs/plugin-capability-catalog.md   dsh 插件能力清单（服务/通道/插槽全目录）
 ```
 
 ## Commands

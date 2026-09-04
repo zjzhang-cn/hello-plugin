@@ -2,6 +2,16 @@
 
 > 规则：**每次功能 / BUG 修改 / 实现都要记录开发日志。** 记录在 `docs/dev-log.md`，一次功能或修复一条记录。按时间倒序（最新在上）。
 
+## 2026-09-04 — README 新增「验证过的 dsh 能力」章节
+
+**类型**：文档
+**涉及**：`README.md`、`CLAUDE.md`、`AGENTS.md`、`docs/dev-log.md`
+**背景 / 问题**：README 缺少对「本插件实际验证了 dsh 哪些能力」的概括；详细清单（`docs/hello-plugin-capabilities.md`）存在但无入口，且 CLAUDE.md / AGENTS.md 的 docs 布局未列出该文档。
+**改动**：
+- README 在「本机 Chrome 调试远端客户端」后新增「验证过的 dsh 能力」：表格概览已实际使用 10 项能力（双面模型/加载、Cordis 内核、Unary RPC、长轮询、Agent 会话、作用域工具、LLM 直连、会话命名/工作区、settings 与工程配置、插槽 UI），每项附「插件里的体现 + 顺带验证的约束」；并说明刻意未用的 3 类通道及选型理由。
+- README 结构表补充 `docs/hello-plugin-capabilities.md`；CLAUDE.md / AGENTS.md 的 docs 布局补该文档行。
+**验证**：README 渲染检查；链接锚点指向「客户端调用宿主」与「宿主主动推送到客户端（长轮询）」章节。
+
 ## 2026-09-02 — jira.ts 改用 jira.js v5 官方客户端（修复 410 弃用端点）
 
 **类型**：重构 + BUG 修复

@@ -30,6 +30,7 @@
 | `.vscode/launch.json` | VS Code 调试配置：在 deepseek-harness 中以本地 `dev.patch.yml` 启动 dsh Web |
 | `package.json` | 包清单，声明两个半区的导出与 dsh 集成字段 |
 | `docs/dev-log.md` | 开发日志：每次功能 / BUG 修改 / 实现的记录（最新在上） |
+| `docs/hello-plugin-capabilities.md` | 本插件 dsh 能力全景：已使用 / 未使用清单（逐项标注源码位置与潜在用途） |
 | `docs/learning-path.md` | 学习路径：按章节由简入深的学习路线 |
 
 ## 架构：双面插件如何接入 dsh
@@ -125,8 +126,28 @@ ssh -L 3080:127.0.0.1:3080 <remote-host>
 
 在本机 Chrome 打开 `http://127.0.0.1:3080`，按 `F12` 打开 DevTools，在「Sources」中搜索 `index.tsx` 并设置断点。`pnpm build` 生成的 `lib/client.js.map` 会将该 bundle 映射回 `src/client/index.tsx`；修改客户端后需重新执行 `pnpm build` 并刷新页面。
 
+## 验证过的 dsh 能力
+
+这个插件是 dsh 双面插件的「接线图 + 边界探针」—— 每个功能都对应一条实际走通的 dsh 能力。按 [docs/hello-plugin-capabilities.md](docs/hello-plugin-capabilities.md)（已使用 ✅ / 未使用 ⬜ 的完整清单）与 [plugin-capability-catalog.md](plugin-capability-catalog.md)（能力全目录）梳理，**已实际使用 10 项**：
+
+| 能力 | 插件里的体现 | 顺带验证的约束 |
+| --- | --- | --- |
+| **双面插件模型 + 加载** | `exports["."]` / `exports["./client"]` 两个半区；`dsh.client.platform=web` 扫描发现；ModuleLoader 惰性注册 | `load({ id })` 的 **id 必须等于包名**（图行 id） |
+| **Cordis 内核** | `name`+`apply(ctx)`、`inject` 依赖注入、`ctx.effect` 生命周期、`ctx.logger`、`ctx.get` 可选获取 | 一切注册包进 `ctx.effect()`；服务缺失用 `ctx.get` 容错 |
+| **Unary RPC**（客户端 → 宿主） | `connection.rpc.call('/hello', 'ping'…)` → `rpc.handle` handler | payload 信封 `{ args }`；结果 `{ ok, value } \| { ok, error }`；**`/api` 被 api-gateway 独占**，自定义通道须另开 |
+| **长轮询**（宿主 → 客户端） | `pending` 队列 + `waiters` 挂起表，`events/poll` 广播推送 | 标准 Remote events 转发对自定义事件不适用：`registerRemoteEvents` 是单例 + 事件名须进 allowlist —— 改用长轮询 |
+| **Agent 会话** | `ctx.agents.create` + `agent.followup` + `whenIdle`，驱动 Agent 获取新闻并总结 | 宿主建会话自动触发 `api-session/added` → Web UI 会话列表可见 |
+| **作用域工具** | `ctx.tools.register` 从 agentCtx 注册 `google_news`（ScopedLayers） | 仅该会话 Agent 可见，不污染全局；parameters 须**完整 JSON Schema**（简写被模型 API 拒绝） |
+| **LLM 直连** | `ctx.llm.stream` + `BlockAssembler` 分析 Jira issue | `ctx.get('llm')` 缺失时返回明确错误，插件照常加载 |
+| **会话命名 / 工作区分组** | `ctx.sessionTitle.rename`；`workspaceRegistry.create` + `setTitle` + `attachSession` | 会话归入「新闻头条」工作区分组显示 |
+| **settings 与工程配置** | `ctx.settings` 注册 jira namespace；工程根 `jira.config.json` / `llm.config.json` 逐级查找 | 工程配置优先于全局 settings；凭据不提交 |
+| **插槽与 UI** | `ctx.slots` 注入 `HelloPill` 到 `shell.overlay`（inject 业务面把服务变组件 props） | 组件只靠 props、永不引用模块级 ctx；**组件必须直接传**（非包装函数） |
+
+**三类能力供插件扩展但本插件刻意未用**：Typert Remote（生成式）/ Remote events（allowlist）/ WebSocket mux —— 均因 harness 独占约束选择自定义通道实现，详见「[客户端调用宿主](#客户端调用宿主)」「[宿主主动推送](#宿主主动推送到客户端长轮询)」章节的选型理由。
+
 ## 开发日志
 
+- **2026-09-01 README 新增「验证过的 dsh 能力」章节** — 概要整理本插件实际使用（10 项）与刻意未用（3 项）的 dsh 能力，指向详尽的 `docs/hello-plugin-capabilities.md` 与能力全目录；结构表补充 capabilities 文档；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 fetchGoogleNews 支持 HTTP 代理** — 按 curl 语义读取 `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`（兼容小写）与 `NO_PROXY`；代理链路纯 Node 内建实现（https 走 CONNECT 隧道、http 走绝对 URI 形式，含 Basic 认证、重定向跟随、chunked 解码），无代理时行为不变；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 扩展 Jira 能力并注册全局工具** — `src/host/jira.ts` 新增搜索/创建/状态变更函数；新建 `src/host/jira-tools.ts` 注册 6 个全局 Jira 工具（jira_search_issues、jira_get_issue、jira_create_issue、jira_add_comment、jira_update_status、jira_get_transitions）；详见 [开发日志](docs/dev-log.md)。
 - **2026-09-01 新建 hello-plugin dsh 能力全景文档** — 新建 `docs/hello-plugin-capabilities.md`，按 `plugin-capability-catalog.md` 类别体系系统梳理已使用（10 项）及未使用（50+ 项）能力，标注源码位置与潜在用途；详见 [开发日志](docs/dev-log.md)。
