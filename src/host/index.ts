@@ -71,7 +71,7 @@ export function apply(ctx: Context): void {
 		if (endpoint === 'ping') {
 			const nameArg = args.name
 			const display = typeof nameArg === 'string' ? nameArg : '(anonymous)'
-			logger.info('client ping:', display)
+			console.log('client ping:', display)
 			return { ok: true, value: `pong from host, hello ${display}!` }
 		}
 
